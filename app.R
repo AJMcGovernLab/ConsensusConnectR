@@ -28,7 +28,7 @@ required_packages <- c(
   "future", "furrr", "promises", "parallelly"
 )
 
-# Optional packages for C++ backend (significant performance boost)
+# Packages for C++ backend (significant performance boost - 50x+ speedup)
 cpp_packages <- c("Rcpp", "RcppArmadillo")
 
 # Function to check and install packages
@@ -39,7 +39,6 @@ install_if_missing <- function(packages, optional = FALSE) {
     if (optional) {
       message(sprintf("Optional package(s) not installed: %s",
                       paste(missing_packages, collapse = ", ")))
-      message("Install them for better performance: install.packages(c('Rcpp', 'RcppArmadillo'))")
       return(invisible(NULL))
     }
 
@@ -58,11 +57,85 @@ install_if_missing <- function(packages, optional = FALSE) {
   }
 }
 
+# Function to check for C++ build tools
+check_build_tools <- function() {
+  # Check if pkgbuild is available, install if not
+  if (!requireNamespace("pkgbuild", quietly = TRUE)) {
+    tryCatch({
+      install.packages("pkgbuild", repos = "https://cloud.r-project.org", quiet = TRUE)
+    }, error = function(e) {
+      return(list(available = FALSE, message = "Could not install pkgbuild to check for build tools"))
+    })
+  }
+
+  if (requireNamespace("pkgbuild", quietly = TRUE)) {
+    has_tools <- tryCatch(pkgbuild::has_build_tools(debug = FALSE), error = function(e) FALSE)
+    if (has_tools) {
+      return(list(available = TRUE, message = "Build tools available"))
+    } else {
+      # Platform-specific instructions
+      if (.Platform$OS.type == "windows") {
+        return(list(
+          available = FALSE,
+          message = paste0(
+            "Rtools is required for C++ compilation.\n",
+            "  Download from: https://cran.r-project.org/bin/windows/Rtools/\n",
+            "  After installing, restart R/RStudio."
+          )
+        ))
+      } else if (Sys.info()["sysname"] == "Darwin") {
+        return(list(
+          available = FALSE,
+          message = paste0(
+            "Xcode Command Line Tools required for C++ compilation.\n",
+            "  Run in Terminal: xcode-select --install\n",
+            "  After installing, restart R/RStudio."
+          )
+        ))
+      } else {
+        return(list(
+          available = FALSE,
+          message = paste0(
+            "C++ compiler required. Install build-essential:\n",
+            "  Ubuntu/Debian: sudo apt-get install build-essential\n",
+            "  Fedora: sudo dnf install gcc-c++\n",
+            "  After installing, restart R/RStudio."
+          )
+        ))
+      }
+    }
+  }
+  return(list(available = FALSE, message = "Could not determine build tool status"))
+}
+
 # Install required packages
 install_if_missing(required_packages)
 
-# Check for optional C++ packages (don't force install - requires compiler)
-install_if_missing(cpp_packages, optional = TRUE)
+# Install C++ packages for performance boost
+message("\n[C++ Backend Setup]")
+build_tools <- check_build_tools()
+
+if (build_tools$available) {
+  # Build tools available - install C++ packages
+  cpp_missing <- cpp_packages[!sapply(cpp_packages, requireNamespace, quietly = TRUE)]
+
+  if (length(cpp_missing) > 0) {
+    message("Installing C++ packages for 50x+ performance boost...")
+    for (pkg in cpp_missing) {
+      tryCatch({
+        install.packages(pkg, repos = "https://cloud.r-project.org", quiet = TRUE)
+        message(sprintf("  Installed: %s", pkg))
+      }, error = function(e) {
+        message(sprintf("  Failed to install %s: %s", pkg, e$message))
+      })
+    }
+  } else {
+    message("C++ packages already installed (Rcpp, RcppArmadillo)")
+  }
+} else {
+  message("C++ backend unavailable - using R fallback (slower but functional)")
+  message(build_tools$message)
+}
 
 # ============================================================================
 # LOAD PACKAGES
