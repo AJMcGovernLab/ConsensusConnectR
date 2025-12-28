@@ -46,19 +46,39 @@ The C++ backend provides significant performance improvements for permutation te
 
 ## Usage
 
-1. **Launch the app:**
-   ```r
-   shiny::runApp()
-   ```
+### Option 1: Run directly from GitHub (no download required)
 
-2. **Load your data:** Upload correlation matrices or connectivity data
+```r
+# Authenticate with GitHub (required for private repo)
+# You'll need a Personal Access Token from: https://github.com/settings/tokens
+shiny::runGitHub("ConsensusConnectR", "AJMcGovernLab",
+                  auth_token = "your_github_token_here")
+```
 
-3. **Configure analysis:**
+Missing packages will be installed automatically on first run.
+
+### Option 2: Clone and run locally
+
+```bash
+git clone https://github.com/AJMcGovernLab/ConsensusConnectR.git
+```
+
+Then in R:
+```r
+setwd("ConsensusConnectR")
+shiny::runApp()
+```
+
+### After launching:
+
+1. **Load your data:** Upload correlation matrices or connectivity data
+
+2. **Configure analysis:**
    - Select correlation methods
    - Choose groups to compare
    - Set permutation parameters
 
-4. **Run analysis:**
+3. **Run analysis:**
    - Use the calibration tool to estimate runtime
    - Execute regional contribution or artificial brain area discovery
 
