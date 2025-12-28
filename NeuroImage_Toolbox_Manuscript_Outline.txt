@@ -1,0 +1,696 @@
+================================================================================
+NeuroImage Toolbox Paper Outline
+================================================================================
+
+ConsensusConnectR: A Multimethod Consensus Framework for Robust Functional
+Connectivity Analysis
+
+================================================================================
+
+MANUSCRIPT SPECIFICATIONS (NeuroImage Toolbox Requirements)
+--------------------------------------------------------------------------------
+
+Requirement          | Target
+---------------------|----------------------------------------------------------
+Word count           | ~5,000-7,000 words (main text)
+Figures              | 5-8 figures
+Tables               | 2-4 tables
+Code availability    | Required at submission
+Sample data          | Required at submission
+Supplementary        | Methods details, additional figures
+
+================================================================================
+
+TITLE PAGE
+--------------------------------------------------------------------------------
+
+Title:
+ConsensusConnectR: A Multimethod Consensus Framework for Robust Functional
+Connectivity Analysis
+
+Running title:
+ConsensusConnectR: Consensus Connectivity Analysis
+
+Authors:
+[Author list with affiliations]
+
+Corresponding author:
+[Contact details]
+
+Keywords:
+functional connectivity, consensus analysis, correlation methods, network
+neuroscience, brain networks, open-source software
+
+Highlights (3-5 bullet points):
+- Integrates five correlation methods with three analytical frameworks for
+  robust connectivity estimation
+- Consensus approach reduces method-dependent variability in hub identification
+- Interactive web interface requires no programming expertise
+- Validated across multiple published studies with diverse datasets
+- Open-source R Shiny application deployable locally or via cloud
+
+================================================================================
+
+ABSTRACT (~250 words)
+--------------------------------------------------------------------------------
+
+Structure:
+
+BACKGROUND (2-3 sentences)
+- Functional connectivity analysis is fundamental to understanding brain
+  network organization
+- Results can vary substantially depending on correlation method and
+  thresholding approach
+- Small sample sizes and methodological choices introduce instability in
+  network metrics
+
+GAP/PROBLEM (1-2 sentences)
+- No existing tool systematically integrates multiple correlation methods
+  with multiple analytical frameworks
+- Researchers must choose single methods without knowing how this choice
+  affects results
+
+SOLUTION (2-3 sentences)
+- ConsensusConnectR integrates five correlation methods (Pearson, Spearman,
+  biweight midcorrelation, shrinkage, partial) with three analytical
+  approaches (weighted, percolation-based, persistence-based)
+- Consensus metrics synthesize results across all 15 method-approach
+  combinations
+- Bayesian confidence weighting quantifies reliability of hub identification
+
+IMPLEMENTATION (1-2 sentences)
+- Interactive R Shiny web application with no programming required
+- Deployable locally or via shinyapps.io cloud hosting
+
+VALIDATION (1-2 sentences)
+- Validated through application in [N] published studies
+- Demonstrated robust hub identification across diverse connectivity datasets
+
+AVAILABILITY (1 sentence)
+- Open-source code, sample data, and documentation available at [repository URL]
+
+================================================================================
+
+1. INTRODUCTION (~1,000-1,200 words)
+--------------------------------------------------------------------------------
+
+1.1 Functional Connectivity Analysis in Neuroscience
+-----------------------------------------------------
+- Definition and importance of functional connectivity
+- Applications across modalities (fMRI, EEG/MEG, calcium imaging,
+  electrophysiology)
+- Role in understanding brain organization, disease, and intervention effects
+
+1.2 The Methodological Variability Problem
+------------------------------------------
+- Different correlation methods capture different aspects of relationships
+  - Pearson: linear associations, sensitive to outliers
+  - Spearman: monotonic relationships, rank-based
+  - Partial: direct connections controlling for confounds
+  - Biweight: robust to outliers (Wilcox, 1994)
+  - Shrinkage: regularized for small samples (Schafer & Strimmer, 2005)
+- Threshold selection dramatically affects network topology
+- Same dataset can yield different "hub" regions depending on methods
+- **Cite key papers demonstrating method-dependent variability**
+
+1.3 The Case for Consensus Approaches
+-------------------------------------
+- Ensemble methods in machine learning reduce variance
+- Meta-analytic thinking: convergence across methods increases confidence
+- Consensus identifies features robust to methodological choices
+- **Cite precedents in other domains (e.g., consensus clustering)**
+
+1.4 Existing Tools and Their Limitations
+----------------------------------------
+- Brief overview of existing connectivity tools (CONN, FSL, custom scripts)
+- Limitation: typically implement single methods
+- Gap: no tool provides systematic multi-method consensus
+
+1.5 ConsensusConnectR: Overview and Aims
+----------------------------------------
+- Introduce the tool and its core philosophy
+- State the three primary aims:
+  1. Integrate multiple correlation methods systematically
+  2. Provide multiple analytical frameworks (weighted, percolation, persistence)
+  3. Synthesize results through consensus metrics with confidence quantification
+- Overview of manuscript structure
+
+================================================================================
+
+2. METHODS (~2,500-3,000 words)
+--------------------------------------------------------------------------------
+
+2.1 Software Architecture
+-------------------------
+
+2.1.1 Design Philosophy
+- Modular architecture (17 specialized modules)
+- Separation of analysis, visualization, and export functions
+- Graceful degradation when optional packages unavailable
+
+2.1.2 Implementation
+- R Shiny framework with shinydashboard UI
+- Core dependencies: igraph, mice, corrplot, psych, corpcor
+- ~30,000 lines of documented R code
+
+TABLE 1: Software Dependencies and Functions
+
+Package     | Function                      | Required/Optional
+------------|-------------------------------|-------------------
+shiny       | Web framework                 | Required
+igraph      | Network analysis              | Required
+mice        | Missing data imputation       | Required
+psych       | Biweight, partial correlation | Optional (fallback available)
+corpcor     | Shrinkage correlation         | Optional (fallback available)
+...         | ...                           | ...
+
+--------------------------------------------------------------------------------
+
+2.2 Data Input and Preprocessing
+--------------------------------
+
+2.2.1 Supported Data Formats
+- CSV/Excel input with flexible column mapping
+- Required: subject ID, group assignment, measurement variables
+- Optional: covariates for partial correlation
+
+2.2.2 Missing Data Handling
+- Multiple Imputation by Chained Equations (MICE; van Buuren &
+  Groothuis-Oudshoorn, 2011)
+- Predictive mean matching (PMM) method
+- Default: m=5 imputations, maxit=10 iterations
+- Imputation diagnostics provided for quality assessment
+
+2.2.3 Anatomical Region Assignment
+- User-defined region mapping
+- Flexible grouping of variables into anatomical structures
+- Custom color assignment for visualization
+
+--------------------------------------------------------------------------------
+
+2.3 Correlation Methods
+-----------------------
+
+TABLE 2: Correlation Methods Implemented
+
+Method      | Description                           | Best Use Case              | Reference
+------------|---------------------------------------|----------------------------|------------------
+Pearson     | Standard linear correlation           | Linear relationships,      | Standard
+            |                                       | normal data                |
+Spearman    | Pearson correlation on ranks          | Non-linear monotonic,      | Standard
+            |                                       | ordinal data               |
+Biweight    | Tukey's biweight robust correlation   | Outlier-contaminated data  | Wilcox (1994)
+Shrinkage   | Regularized correlation matrix        | Small samples              | Schafer &
+            |                                       |                            | Strimmer (2005)
+Partial     | Correlation controlling for all       | Direct connections         | Marrelec et
+            | other variables                       |                            | al. (2006)
+
+2.3.1 Method-Specific Considerations
+- Sample size requirements and warnings
+- Automatic fallback to Pearson when methods unavailable
+- Handling of non-positive-definite matrices
+
+--------------------------------------------------------------------------------
+
+2.4 Analytical Approaches
+-------------------------
+
+2.4.1 Weighted Network Analysis
+- Full correlation matrix retained (no thresholding)
+- Network metrics computed on weighted adjacency matrix
+- Advantages: preserves continuous information
+- Metrics: weighted clustering coefficient (Barrat et al., 2004), weighted
+  eigenvector centrality, node strength
+
+2.4.2 Percolation-Based Analysis
+- Threshold sweep across correlation range (0.01-0.95)
+- Giant component tracking at each threshold
+- Optimal threshold: highest threshold maintaining full connectivity
+- Second derivative (curvature) method as fallback
+- Network metrics computed at optimal threshold
+
+FIGURE 1: Percolation curve example showing threshold selection
+
+2.4.3 Persistence-Based Analysis
+- Filtrational approach across threshold range
+- Area Under Curve (AUC) integration of node metrics
+- Advantages: robust to arbitrary threshold selection
+- Captures node importance across full filtration
+
+--------------------------------------------------------------------------------
+
+2.5 Network Metrics
+-------------------
+
+2.5.1 Node-Level Metrics
+- Degree centrality
+- Betweenness centrality
+- Closeness centrality
+- Eigenvector centrality
+- Clustering coefficient
+- Node strength (weighted)
+
+2.5.2 Global Metrics
+- Network density
+- Global clustering coefficient
+- Characteristic path length
+- Small-world coefficient
+- Modularity
+
+--------------------------------------------------------------------------------
+
+2.6 Consensus Framework
+-----------------------
+
+2.6.1 Standardization Across Methods
+- Z-score transformation of eigenvector centrality within each method-approach
+  combination
+- Enables cross-method comparison on common scale
+
+  Z_node = (EC_node - mean_EC) / sd_EC
+
+2.6.2 Hub Identification
+- Hub threshold: Z >= 1.5 (default, user-adjustable)
+- Hub probability: proportion of method-approach combinations identifying
+  node as hub
+
+2.6.3 Bayesian Confidence-Weighted Consensus
+- Prior hub probability: 15% (based on typical network hub proportion)
+- Weight by inverse coefficient of variation (consistency across methods)
+- Posterior hub score with credible intervals
+
+  P(Hub|Data) = [P(Data|Hub) * P(Hub)] / P(Data)
+
+2.6.4 Cross-Approach Aggregation
+- Separate consensus within each approach (weighted, percolation, persistence)
+- Meta-consensus across all 15 combinations
+- Confidence categories: High (>12/15 agreement), Medium (8-12), Low (<8)
+
+--------------------------------------------------------------------------------
+
+2.7 Statistical Testing
+-----------------------
+
+2.7.1 Permutation Testing
+- Null distribution via group label permutation
+- User-specified number of permutations (default: 1000)
+- P-value computation for network metric differences
+
+2.7.2 Group Comparisons
+- Between-group comparison of node metrics
+- Edge-wise comparison of connectivity matrices
+- False discovery rate correction
+
+--------------------------------------------------------------------------------
+
+2.8 Visualization
+-----------------
+- Correlation heatmaps (per method)
+- Network graphs with anatomical region coloring
+- Percolation curves
+- Consensus ranking plots
+- Hub identification scatter plots
+- Regional connectivity aggregation
+
+================================================================================
+
+3. SOFTWARE IMPLEMENTATION (~800-1,000 words)
+--------------------------------------------------------------------------------
+
+3.1 User Interface
+------------------
+
+3.1.1 Workflow Structure
+Seven-tab progressive workflow:
+1. Import     - Data upload and column mapping
+2. Brain Areas - Region definition and color assignment
+3. Settings   - Method and parameter selection
+4. Summary    - Consensus results overview
+5. Results    - Detailed analysis outputs
+6. Downloads  - Export functionality
+7. About      - Documentation and citation
+
+FIGURE 2: User interface screenshots showing workflow
+
+3.1.2 Progress Tracking
+- Sidebar progress indicators
+- Real-time analysis status updates
+- Error handling with informative messages
+
+--------------------------------------------------------------------------------
+
+3.2 Analysis Configuration
+--------------------------
+
+3.2.1 Method Selection
+- Checkbox selection of correlation methods
+- Checkbox selection of analytical approaches
+- All combinations computed in parallel
+
+3.2.2 Parameter Options
+- Percolation threshold range
+- Permutation count
+- Hub Z-threshold
+- Export format preferences
+
+--------------------------------------------------------------------------------
+
+3.3 Output and Export
+---------------------
+
+3.3.1 Visualization Export
+- Publication-ready PDF figures
+- PNG for presentations
+- Organized by analysis category
+
+3.3.2 Data Export
+- CSV files for all metrics
+- JSON network files for external analysis
+- Complete results archive (ZIP)
+
+3.3.3 Network Export
+- Adjacency matrices
+- Node metric tables
+- Edge lists
+
+--------------------------------------------------------------------------------
+
+3.4 Deployment Options
+----------------------
+
+3.4.1 Local Installation
+
+  # Required packages
+  install.packages(c("shiny", "shinydashboard", "igraph", "mice", ...))
+  shiny::runApp("app.R")
+
+3.4.2 Cloud Deployment
+- shinyapps.io hosting
+- Institutional Shiny Server
+- Docker containerization (future)
+
+--------------------------------------------------------------------------------
+
+3.5 Code and Data Availability
+------------------------------
+- Repository: [GitHub URL]
+- License: [MIT/GPL]
+- Sample data: Included for all demonstrations
+- Documentation: User guide and function reference
+- Version: 3.0
+
+================================================================================
+
+4. DEMONSTRATION AND VALIDATION (~1,000-1,200 words)
+--------------------------------------------------------------------------------
+
+4.1 Sample Dataset Description
+------------------------------
+- Description of included sample data
+- Variables, sample size, groups
+- Source and permissions
+
+--------------------------------------------------------------------------------
+
+4.2 Demonstration of Core Functionality
+---------------------------------------
+
+4.2.1 Data Import and Preprocessing
+- Walkthrough of import process
+- Imputation results (if applicable)
+
+FIGURE 3: Data quality assessment showing imputation diagnostics
+
+4.2.2 Correlation Method Comparison
+- Side-by-side correlation matrices across methods
+- Quantification of method agreement
+
+FIGURE 4: Correlation matrices across five methods showing convergence and
+divergence
+
+4.2.3 Analytical Approach Comparison
+- Network topology at weighted, percolation threshold, and persistence AUC
+- Differences in identified hubs
+
+4.2.4 Consensus Results
+- Consensus hub rankings
+- Confidence categorization
+- Cross-method agreement visualization
+
+FIGURE 5: Consensus hub identification showing agreement across method-approach
+combinations
+
+--------------------------------------------------------------------------------
+
+4.3 Validation Through Published Applications
+----------------------------------------------
+
+4.3.1 Study 1: [Brief description]
+- Dataset characteristics
+- Key findings enabled by consensus approach
+- Citation
+
+4.3.2 Study 2: [Brief description]
+- Dataset characteristics
+- Key findings
+- Citation
+
+4.3.3 Study 3: [Brief description]
+- [If applicable]
+
+--------------------------------------------------------------------------------
+
+4.4 Comparison with Single-Method Approaches
+--------------------------------------------
+- Demonstration of hub ranking variability across single methods
+- Consensus reduces false positive hubs
+- Quantification of ranking stability improvement
+
+FIGURE 6: Hub ranking variability - single methods vs. consensus
+
+--------------------------------------------------------------------------------
+
+4.5 Computational Performance
+-----------------------------
+- Processing time benchmarks
+- Memory requirements
+- Scalability considerations
+
+TABLE 3: Computational benchmarks
+
+Dataset Size | Nodes  | Processing Time | Memory
+-------------|--------|-----------------|--------
+Small        | 10-20  | ~30 sec         | <1 GB
+Medium       | 20-50  | ~2 min          | 1-2 GB
+Large        | 50-100 | ~10 min         | 2-4 GB
+
+================================================================================
+
+5. DISCUSSION (~1,000-1,200 words)
+--------------------------------------------------------------------------------
+
+5.1 Summary of Contributions
+----------------------------
+- First tool integrating multiple correlation methods with multiple
+  analytical frameworks
+- Consensus approach provides robust hub identification
+- Accessible to researchers without programming expertise
+
+--------------------------------------------------------------------------------
+
+5.2 Advantages of the Consensus Approach
+----------------------------------------
+- Reduced method-dependent false positives
+- Confidence quantification for hub identification
+- Transparency about methodological sensitivity
+
+--------------------------------------------------------------------------------
+
+5.3 Comparison with Existing Tools
+----------------------------------
+- Comparison with CONN, FSL, NBS, Brain Connectivity Toolbox
+- Complementary rather than replacement
+- Unique contribution: systematic multi-method integration
+
+--------------------------------------------------------------------------------
+
+5.4 Use Cases and Applications
+------------------------------
+- Small-sample studies (rare diseases, specialized populations)
+- Exploratory connectivity analysis
+- Method sensitivity assessment
+- Teaching and training
+
+--------------------------------------------------------------------------------
+
+5.5 Limitations and Future Directions
+-------------------------------------
+
+5.5.1 Current Limitations
+- Single time-point analysis only (no dynamic connectivity)
+- Correlation-based methods only (no partial least squares, mutual information)
+- Memory constraints for very large networks (>100 nodes)
+- Web interface latency for large analyses
+
+5.5.2 Planned Enhancements
+- Dynamic connectivity extension
+- Additional correlation methods
+- Batch processing capability
+- API for programmatic access
+- Docker containerization
+
+--------------------------------------------------------------------------------
+
+5.6 Conclusion
+--------------
+- Restate key contribution
+- Availability and citation information
+- Invitation for community feedback and contributions
+
+================================================================================
+
+6. DATA AND CODE AVAILABILITY STATEMENT
+--------------------------------------------------------------------------------
+
+Code Repository: [GitHub URL]
+
+Sample Data: Included in repository at /data/sample_dataset.csv
+
+Documentation: User guide available at [URL or as Supplementary Material]
+
+License: [Specify license]
+
+Requirements: R >= 4.0, packages listed in Table 1
+
+Live Demo: [shinyapps.io URL if available]
+
+================================================================================
+
+7. AUTHOR CONTRIBUTIONS (CRediT)
+--------------------------------------------------------------------------------
+
+Conceptualization:
+Methodology:
+Software:
+Validation:
+Writing - Original Draft:
+Writing - Review & Editing:
+Visualization:
+Supervision:
+
+================================================================================
+
+8. ACKNOWLEDGMENTS
+--------------------------------------------------------------------------------
+
+[Funding sources, contributors, etc.]
+
+================================================================================
+
+9. REFERENCES
+--------------------------------------------------------------------------------
+
+Key references to include:
+
+METHODS:
+
+Barrat, A., et al. (2004). The architecture of complex weighted networks.
+  PNAS.
+
+Schafer, J., & Strimmer, K. (2005). A shrinkage approach to large-scale
+  covariance matrix estimation. Statistical Applications in Genetics and
+  Molecular Biology.
+
+Wilcox, R.R. (1994). The percentage bend correlation coefficient.
+  Psychometrika.
+
+van Buuren, S., & Groothuis-Oudshoorn, K. (2011). mice: Multivariate
+  imputation by chained equations in R. Journal of Statistical Software.
+
+Marrelec, G., et al. (2006). Partial correlation for functional brain
+  interactivity investigation in functional MRI. NeuroImage.
+
+NETWORK NEUROSCIENCE:
+
+Rubinov, M., & Sporns, O. (2010). Complex network measures of brain
+  connectivity. NeuroImage.
+
+Bullmore, E., & Sporns, O. (2009). Complex brain networks. Nature Reviews
+  Neuroscience.
+
+SOFTWARE:
+
+Csardi, G., & Nepusz, T. (2006). The igraph software package for complex
+  network research. InterJournal.
+
+================================================================================
+
+FIGURES
+--------------------------------------------------------------------------------
+
+Figure | Content                          | Purpose
+-------|----------------------------------|------------------------------------------
+Fig 1  | Workflow schematic               | Overview of ConsensusConnectR pipeline
+Fig 2  | UI screenshots                   | Demonstrate user interface (2-3 panels)
+Fig 3  | Correlation method comparison    | 5-panel heatmaps showing method differences
+Fig 4  | Percolation analysis             | Threshold curve + network at optimal threshold
+Fig 5  | Consensus results                | Hub ranking with confidence + network visualization
+Fig 6  | Validation                       | Single-method vs. consensus hub stability
+Fig 7  | (Optional) Group comparison      | Statistical comparison visualization
+
+================================================================================
+
+TABLES
+--------------------------------------------------------------------------------
+
+Table   | Content
+--------|---------------------------------------------------------------
+Table 1 | Software dependencies and versions
+Table 2 | Correlation methods with formulas and use cases
+Table 3 | Computational benchmarks
+Table 4 | (Optional) Comparison with existing tools
+
+================================================================================
+
+SUPPLEMENTARY MATERIAL
+--------------------------------------------------------------------------------
+
+1. Supplementary Methods: Detailed mathematical formulations
+2. Supplementary Figures: Additional visualizations, full UI walkthrough
+3. Supplementary Tables: Complete parameter options, default values
+4. User Guide: Step-by-step tutorial (or link to online documentation)
+
+================================================================================
+
+PRE-SUBMISSION CHECKLIST (NeuroImage Requirements)
+--------------------------------------------------------------------------------
+
+[ ] Code available in public repository (GitHub)
+[ ] Sample data included for reviewer testing
+[ ] All software dependencies documented
+[ ] README with installation instructions
+[ ] License file included
+[ ] All figures at publication quality (300 DPI minimum)
+[ ] Cover letter prepared
+[ ] All co-authors approved final version
+[ ] Data availability statement complete
+[ ] CRediT author contributions assigned
+
+================================================================================
+
+NOTES
+--------------------------------------------------------------------------------
+
+NeuroImage Toolbox Paper Requirements:
+- Software must be available at time of submission for reviewer testing
+- Sample data required for replication of demonstrations
+- Source code preferred for transparency
+- Clear citation of underlying software dependencies
+- Papers submitted as Technical Notes without code/data will be desk rejected
+
+Target Journal: NeuroImage (Elsevier)
+Article Type: Toolbox Paper
+APC: $3,540 USD
+Impact Factor: 4.5-5.7 (2024)
+
+================================================================================

@@ -1,0 +1,39 @@
+# R session files
+.Rhistory
+.Rdata
+.RData
+.Ruserdata
+*.Rproj.user/
+
+# R package build artifacts
+*.Rcheck/
+*.tar.gz
+
+# Compiled C++ files (will be recompiled on each machine)
+src/*.o
+src/*.so
+src/*.dll
+
+# Shiny deployment tokens (contains secrets)
+rsconnect/
+
+# Backup files
+*.backup
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Large data files (add specific ones if needed)
+*.rds
+*.RDS
+*.csv
+*.xlsx
+
+# Logs
+*.log

@@ -1,0 +1,542 @@
+================================================================================
+ConsensusConnectR Manuscript - Literature References
+================================================================================
+
+Compiled for NeuroImage Toolbox Paper Submission
+Last Updated: December 2025
+
+================================================================================
+
+CORE NETWORK NEUROSCIENCE REFERENCES
+--------------------------------------------------------------------------------
+
+1. Rubinov, M., & Sporns, O. (2010). Complex network measures of brain
+   connectivity: Uses and interpretations. NeuroImage, 52(3), 1059-1069.
+   https://doi.org/10.1016/j.neuroimage.2009.10.003
+
+   * ESSENTIAL CITATION - Brain Connectivity Toolbox paper
+   * Defines standard network metrics used in connectivity analysis
+   * Over 10,000 citations - foundational paper for the field
+   * Cite for: degree, betweenness, clustering coefficient, modularity definitions
+
+2. Bullmore, E., & Sporns, O. (2009). Complex brain networks: Graph theoretical
+   analysis of structural and functional systems. Nature Reviews Neuroscience,
+   10(3), 186-198.
+   https://doi.org/10.1038/nrn2575
+
+   * ESSENTIAL CITATION - Seminal review of brain network analysis
+   * Establishes graph theory framework for neuroscience
+   * Cite for: introduction to network neuroscience concepts
+
+3. Sporns, O. (2011). Networks of the Brain. MIT Press.
+
+   * Comprehensive textbook on brain networks
+   * Cite for: theoretical background on network organization
+
+4. Bassett, D. S., & Sporns, O. (2017). Network neuroscience. Nature
+   Neuroscience, 20(3), 353-364.
+   https://doi.org/10.1038/nn.4502
+
+   * Modern overview of network neuroscience field
+   * Cite for: current state of the field in introduction
+
+================================================================================
+
+CORRELATION METHODS
+--------------------------------------------------------------------------------
+
+SHRINKAGE CORRELATION:
+
+5. Schäfer, J., & Strimmer, K. (2005). A shrinkage approach to large-scale
+   covariance matrix estimation and implications for functional genomics.
+   Statistical Applications in Genetics and Molecular Biology, 4(1), Article 32.
+   https://doi.org/10.2202/1544-6115.1175
+
+   * ESSENTIAL CITATION - Shrinkage correlation method
+   * Ledoit-Wolf shrinkage estimator
+   * Critical for small sample size situations
+   * Implemented in corpcor R package
+
+6. Ledoit, O., & Wolf, M. (2004). A well-conditioned estimator for large-
+   dimensional covariance matrices. Journal of Multivariate Analysis, 88(2),
+   365-411.
+   https://doi.org/10.1016/S0047-259X(03)00096-4
+
+   * Original Ledoit-Wolf shrinkage estimator
+   * Theoretical foundation for shrinkage approach
+
+BIWEIGHT MIDCORRELATION:
+
+7. Wilcox, R. R. (1994). The percentage bend correlation coefficient.
+   Psychometrika, 59(4), 601-616.
+   https://doi.org/10.1007/BF02294395
+
+   * ESSENTIAL CITATION - Biweight/percentage bend correlation
+   * Robust correlation resistant to outliers
+   * Cite for: biweight midcorrelation method
+
+8. Langfelder, P., & Horvath, S. (2012). Fast R functions for robust
+   correlations and hierarchical clustering. Journal of Statistical Software,
+   46(11), 1-17.
+   https://doi.org/10.18637/jss.v046.i11
+
+   * WGCNA package paper
+   * Implements biweight midcorrelation in R
+   * Cite for: implementation details
+
+PARTIAL CORRELATION:
+
+9. Marrelec, G., Krainik, A., Duffau, H., Pélégrini-Issac, M., Lehéricy, S.,
+   Doyon, J., & Benali, H. (2006). Partial correlation for functional brain
+   interactivity investigation in functional MRI. NeuroImage, 32(1), 228-237.
+   https://doi.org/10.1016/j.neuroimage.2005.12.057
+
+   * ESSENTIAL CITATION - Partial correlation in brain connectivity
+   * Distinguishes direct from indirect connections
+   * Cite for: partial correlation methodology in neuroscience
+
+10. Smith, S. M., Miller, K. L., Salimi-Khorshidi, G., Webster, M., Beckmann,
+    C. F., Nichols, T. E., Ramsey, J. D., & Woolrich, M. W. (2011). Network
+    modelling methods for FMRI. NeuroImage, 54(2), 875-891.
+    https://doi.org/10.1016/j.neuroimage.2010.08.063
+
+    * Comprehensive comparison of connectivity estimation methods
+    * Includes partial correlation evaluation
+    * Cite for: method comparison context
+
+GENERAL CORRELATION METHOD COMPARISONS:
+
+11. Varoquaux, G., & Craddock, R. C. (2013). Learning and comparing functional
+    connectomes across subjects. NeuroImage, 80, 405-415.
+    https://doi.org/10.1016/j.neuroimage.2013.04.007
+
+    * Compares correlation estimation approaches
+    * Discusses regularization methods
+    * Cite for: correlation method comparison
+
+================================================================================
+
+THRESHOLD SELECTION AND PERCOLATION
+--------------------------------------------------------------------------------
+
+12. Garrison, K. A., Scheinost, D., Finn, E. S., Shen, X., & Constable, R. T.
+    (2015). The impact of proportional thresholding on functional connectivity
+    analysis. NeuroImage, 118, 561-570.
+    https://doi.org/10.1016/j.neuroimage.2015.05.011
+
+    * ESSENTIAL CITATION - Threshold selection effects
+    * Shows how thresholding affects network metrics
+    * Cite for: motivating need for multiple threshold approaches
+
+13. van den Heuvel, M. P., de Lange, S. C., Zalesky, A., Seguin, C., Yeo, B. T.,
+    & Schmidt, R. (2017). Proportional thresholding in resting-state fMRI
+    functional connectivity networks and consequences for patient-control
+    connectome studies. NeuroImage: Clinical, 15, 310-320.
+    https://doi.org/10.1016/j.nicl.2017.05.011
+
+    * Effects of proportional thresholding
+    * Clinical implications of threshold choice
+
+14. Bordier, C., Nicolini, C., & Bhattacharyya, S. (2017). Graph analysis and
+    modularity of brain functional connectivity networks: Searching for the
+    optimal threshold. Frontiers in Neuroscience, 11, 441.
+    https://doi.org/10.3389/fnins.2017.00441
+
+    * Optimal threshold selection methods
+    * Compares different thresholding approaches
+
+15. Gallos, L. K., Makse, H. A., & Sigman, M. (2012). A small world of weak
+    ties provides optimal global integration of self-similar modules in
+    functional brain networks. Proceedings of the National Academy of Sciences,
+    109(8), 2825-2830.
+    https://doi.org/10.1073/pnas.1106612109
+
+    * Percolation analysis in brain networks
+    * Cite for: percolation-based approach
+
+16. Achard, S., Salvador, R., Whitcher, B., Suckling, J., & Bullmore, E. (2006).
+    A resilient, low-frequency, small-world human brain functional network with
+    highly connected association cortical hubs. Journal of Neuroscience, 26(1),
+    63-72.
+    https://doi.org/10.1523/JNEUROSCI.3874-05.2006
+
+    * Early work on brain network topology
+    * Threshold-dependent network analysis
+
+================================================================================
+
+NETWORK METRICS AND SMALL-WORLD ARCHITECTURE
+--------------------------------------------------------------------------------
+
+17. Watts, D. J., & Strogatz, S. H. (1998). Collective dynamics of 'small-world'
+    networks. Nature, 393(6684), 440-443.
+    https://doi.org/10.1038/30918
+
+    * ESSENTIAL CITATION - Original small-world networks paper
+    * Foundational for small-world coefficient calculation
+    * Over 40,000 citations
+
+18. Barrat, A., Barthélemy, M., Pastor-Satorras, R., & Vespignani, A. (2004).
+    The architecture of complex weighted networks. Proceedings of the National
+    Academy of Sciences, 101(11), 3747-3752.
+    https://doi.org/10.1073/pnas.0400087101
+
+    * ESSENTIAL CITATION - Weighted network metrics
+    * Defines weighted clustering coefficient
+    * Cite for: weighted network analysis methodology
+
+19. Newman, M. E. J. (2004). Analysis of weighted networks. Physical Review E,
+    70(5), 056131.
+    https://doi.org/10.1103/PhysRevE.70.056131
+
+    * Weighted network analysis methods
+    * Complements Barrat et al. for weighted metrics
+
+20. Onnela, J. P., Saramäki, J., Kertész, J., & Kaski, K. (2005). Intensity and
+    coherence of motifs in weighted complex networks. Physical Review E, 71(6),
+    065103.
+    https://doi.org/10.1103/PhysRevE.71.065103
+
+    * Alternative weighted clustering coefficient
+    * Cite for: weighted metric variations
+
+================================================================================
+
+CENTRALITY AND HUB IDENTIFICATION
+--------------------------------------------------------------------------------
+
+21. Freeman, L. C. (1978). Centrality in social networks conceptual clarification.
+    Social Networks, 1(3), 215-239.
+    https://doi.org/10.1016/0378-8733(78)90021-7
+
+    * Original centrality definitions
+    * Cite for: betweenness, closeness centrality
+
+22. Bonacich, P. (1987). Power and centrality: A family of measures. American
+    Journal of Sociology, 92(5), 1170-1182.
+    https://doi.org/10.1086/228631
+
+    * Eigenvector centrality foundations
+    * Cite for: eigenvector centrality methodology
+
+23. van den Heuvel, M. P., & Sporns, O. (2013). Network hubs in the human brain.
+    Trends in Cognitive Sciences, 17(12), 683-696.
+    https://doi.org/10.1016/j.tics.2013.09.012
+
+    * ESSENTIAL CITATION - Brain network hubs review
+    * Defines hub identification approaches
+    * Cite for: hub identification rationale
+
+24. Power, J. D., Schlaggar, B. L., Lessov-Schlaggar, C. N., & Petersen, S. E.
+    (2013). Evidence for hubs in human functional brain networks. Neuron, 79(4),
+    798-813.
+    https://doi.org/10.1016/j.neuron.2013.07.035
+
+    * Hub identification in functional connectivity
+    * Multiple hub metrics comparison
+
+================================================================================
+
+MODULARITY AND COMMUNITY DETECTION
+--------------------------------------------------------------------------------
+
+25. Newman, M. E. J. (2006). Modularity and community structure in networks.
+    Proceedings of the National Academy of Sciences, 103(23), 8577-8582.
+    https://doi.org/10.1073/pnas.0601602103
+
+    * ESSENTIAL CITATION - Modularity definition
+    * Foundational for community detection
+    * Cite for: modularity calculation
+
+26. Blondel, V. D., Guillaume, J. L., Lambiotte, R., & Lefebvre, E. (2008).
+    Fast unfolding of communities in large networks. Journal of Statistical
+    Mechanics: Theory and Experiment, 2008(10), P10008.
+    https://doi.org/10.1088/1742-5468/2008/10/P10008
+
+    * Louvain algorithm for community detection
+    * Cite for: modularity optimization method
+
+27. Meunier, D., Lambiotte, R., & Bullmore, E. T. (2010). Modular and
+    hierarchically modular organization of brain networks. Frontiers in
+    Neuroscience, 4, 200.
+    https://doi.org/10.3389/fnins.2010.00200
+
+    * Modularity in brain networks
+    * Cite for: brain network modularity context
+
+================================================================================
+
+MISSING DATA AND IMPUTATION
+--------------------------------------------------------------------------------
+
+28. van Buuren, S., & Groothuis-Oudshoorn, K. (2011). mice: Multivariate
+    imputation by chained equations in R. Journal of Statistical Software,
+    45(3), 1-67.
+    https://doi.org/10.18637/jss.v045.i03
+
+    * ESSENTIAL CITATION - MICE package paper
+    * Multiple imputation methodology
+    * Cite for: missing data handling
+
+29. Rubin, D. B. (1987). Multiple Imputation for Nonresponse in Surveys.
+    John Wiley & Sons.
+
+    * Original multiple imputation framework
+    * Theoretical foundation for MICE
+
+30. Little, R. J. A., & Rubin, D. B. (2019). Statistical Analysis with Missing
+    Data (3rd ed.). John Wiley & Sons.
+
+    * Comprehensive missing data methodology
+    * Cite for: theoretical background
+
+================================================================================
+
+SOFTWARE AND TOOLS
+--------------------------------------------------------------------------------
+
+31. Csárdi, G., & Nepusz, T. (2006). The igraph software package for complex
+    network research. InterJournal, Complex Systems, 1695.
+    https://igraph.org
+
+    * ESSENTIAL CITATION - igraph package
+    * Core network analysis library
+    * Cite for: network computation implementation
+
+32. Whitfield-Gabrieli, S., & Nieto-Castanon, A. (2012). Conn: A functional
+    connectivity toolbox for correlated and anticorrelated brain networks.
+    Brain Connectivity, 2(3), 125-141.
+    https://doi.org/10.1089/brain.2012.0073
+
+    * CONN toolbox paper
+    * Major fMRI connectivity tool
+    * Cite for: comparison with existing tools
+
+33. Jenkinson, M., Beckmann, C. F., Behrens, T. E. J., Woolrich, M. W., &
+    Smith, S. M. (2012). FSL. NeuroImage, 62(2), 782-790.
+    https://doi.org/10.1016/j.neuroimage.2011.09.015
+
+    * FSL software suite
+    * Cite for: comparison with existing tools
+
+34. Chang, W., Cheng, J., Allaire, J. J., Xie, Y., & McPherson, J. (2023).
+    shiny: Web Application Framework for R. R package version 1.8.0.
+    https://CRAN.R-project.org/package=shiny
+
+    * R Shiny framework
+    * Cite for: implementation platform
+
+35. R Core Team (2024). R: A language and environment for statistical computing.
+    R Foundation for Statistical Computing, Vienna, Austria.
+    https://www.R-project.org/
+
+    * R software citation
+    * Cite for: implementation language
+
+================================================================================
+
+SAMPLE SIZE AND RELIABILITY
+--------------------------------------------------------------------------------
+
+36. Button, K. S., Ioannidis, J. P. A., Mokrysz, C., Nosek, B. A., Flint, J.,
+    Robinson, E. S. J., & Munafò, M. R. (2013). Power failure: Why small sample
+    size undermines the reliability of neuroscience. Nature Reviews Neuroscience,
+    14(5), 365-376.
+    https://doi.org/10.1038/nrn3475
+
+    * ESSENTIAL CITATION - Small sample size issues
+    * Motivates need for robust methods
+    * Cite for: introduction/rationale for consensus approach
+
+37. Scheinost, D., Noble, S., Horien, C., Greene, A. S., Lake, E. M., Salehi, M.,
+    Gao, S., Shen, X., O'Connor, D., Barber, A. D., Constable, R. T., &
+    Bharat, J. (2019). Ten simple rules for predictive modeling of individual
+    differences in neuroimaging. NeuroImage, 193, 35-45.
+    https://doi.org/10.1016/j.neuroimage.2019.02.057
+
+    * Best practices for neuroimaging analysis
+    * Addresses reliability concerns
+
+38. Noble, S., Scheinost, D., & Constable, R. T. (2019). A decade of test-retest
+    reliability of functional connectivity: A systematic review and meta-analysis.
+    NeuroImage, 203, 116157.
+    https://doi.org/10.1016/j.neuroimage.2019.116157
+
+    * Test-retest reliability of connectivity
+    * Cite for: reliability concerns in connectivity analysis
+
+39. Zuo, X. N., & Xing, X. X. (2014). Test-retest reliabilities of resting-state
+    FMRI measurements in human brain functional connectomics: A systems
+    neuroscience perspective. Neuroscience & Biobehavioral Reviews, 45, 100-118.
+    https://doi.org/10.1016/j.neubiorev.2014.05.009
+
+    * Comprehensive reliability review
+    * Cite for: methodological variability context
+
+================================================================================
+
+CONSENSUS AND ENSEMBLE METHODS
+--------------------------------------------------------------------------------
+
+40. Strehl, A., & Ghosh, J. (2002). Cluster ensembles - A knowledge reuse
+    framework for combining multiple partitions. Journal of Machine Learning
+    Research, 3, 583-617.
+
+    * Consensus clustering foundations
+    * Cite for: ensemble/consensus methodology rationale
+
+41. Lancichinetti, A., & Fortunato, S. (2012). Consensus clustering in complex
+    networks. Scientific Reports, 2, 336.
+    https://doi.org/10.1038/srep00336
+
+    * Consensus methods in network analysis
+    * Cite for: consensus approach precedent
+
+42. Dietterich, T. G. (2000). Ensemble methods in machine learning. In
+    International Workshop on Multiple Classifier Systems (pp. 1-15). Springer.
+    https://doi.org/10.1007/3-540-45014-9_1
+
+    * Ensemble methods overview
+    * Cite for: theoretical motivation for consensus
+
+================================================================================
+
+TOPOLOGICAL AND PERSISTENCE-BASED METHODS
+--------------------------------------------------------------------------------
+
+43. Giusti, C., Ghrist, R., & Bassett, D. S. (2016). Two's company, three (or
+    more) is a simplex: Algebraic-topological tools for understanding higher-
+    order structure in neural data. Journal of Computational Neuroscience,
+    41(1), 1-14.
+    https://doi.org/10.1007/s10827-016-0608-6
+
+    * Topological data analysis in neuroscience
+    * Cite for: persistence-based analysis rationale
+
+44. Petri, G., Expert, P., Turkheimer, F., Carhart-Harris, R., Nutt, D.,
+    Hellyer, P. J., & Vaccarino, F. (2014). Homological scaffolds of brain
+    functional networks. Journal of the Royal Society Interface, 11(101),
+    20140873.
+    https://doi.org/10.1098/rsif.2014.0873
+
+    * Persistent homology in brain networks
+    * Cite for: topological analysis background
+
+45. Bassett, D. S., & Bullmore, E. T. (2017). Small-world brain networks
+    revisited. Neuroscientist, 23(5), 499-516.
+    https://doi.org/10.1177/1073858416667720
+
+    * Updated perspective on brain network topology
+    * Cite for: network topology discussion
+
+================================================================================
+
+APPLICATIONS AND VALIDATION CONTEXT
+--------------------------------------------------------------------------------
+
+46. Lee, J., et al. (2026). Parity-induced functional connectivity alterations
+    in middle-aged female rats are contingent on APOEε4 genotype.
+    Psychoneuroendocrinology.
+    [Published study using ConsensusConnectR methodology]
+
+    * ESSENTIAL CITATION - Validation study
+    * Demonstrates methodology in published research
+    * Cite for: validation/demonstration section
+
+47. Fornito, A., Zalesky, A., & Bullmore, E. T. (2016). Fundamentals of Brain
+    Network Analysis. Academic Press.
+
+    * Comprehensive brain network analysis textbook
+    * Cite for: methodological background
+
+48. Zalesky, A., Fornito, A., & Bullmore, E. T. (2010). Network-based statistic:
+    Identifying differences in brain networks. NeuroImage, 53(4), 1197-1207.
+    https://doi.org/10.1016/j.neuroimage.2010.06.041
+
+    * Network-based statistics method
+    * Cite for: comparison with existing methods
+
+================================================================================
+
+R PACKAGE CITATIONS
+--------------------------------------------------------------------------------
+
+49. Revelle, W. (2024). psych: Procedures for Psychological, Psychometric, and
+    Personality Research. R package version 2.4.1.
+    https://CRAN.R-project.org/package=psych
+
+    * psych package for correlation methods
+    * Cite for: biweight midcorrelation, partial correlation implementation
+
+50. Schäfer, J., Opgen-Rhein, R., Zuber, V., Ahdesmäki, M., Silva, A. P. D., &
+    Strimmer, K. (2021). corpcor: Efficient Estimation of Covariance and
+    (Partial) Correlation. R package version 1.6.10.
+    https://CRAN.R-project.org/package=corpcor
+
+    * corpcor package for shrinkage correlation
+    * Cite for: shrinkage estimation implementation
+
+51. Wei, T., & Simko, V. (2021). corrplot: Visualization of a Correlation Matrix.
+    R package version 0.92.
+    https://CRAN.R-project.org/package=corrplot
+
+    * corrplot package
+    * Cite for: correlation visualization
+
+52. Wickham, H. (2016). ggplot2: Elegant Graphics for Data Analysis. Springer.
+    https://doi.org/10.1007/978-3-319-24277-4
+
+    * ggplot2 package
+    * Cite for: visualization implementation
+
+================================================================================
+
+SUMMARY: PRIORITY CITATIONS BY SECTION
+--------------------------------------------------------------------------------
+
+INTRODUCTION:
+- Bullmore & Sporns (2009) - Brain networks overview
+- Button et al. (2013) - Small sample problems
+- van den Heuvel & Sporns (2013) - Network hubs
+
+METHODS - CORRELATION:
+- Schäfer & Strimmer (2005) - Shrinkage
+- Wilcox (1994) - Biweight
+- Marrelec et al. (2006) - Partial correlation
+
+METHODS - NETWORK ANALYSIS:
+- Rubinov & Sporns (2010) - Network metrics
+- Barrat et al. (2004) - Weighted metrics
+- Watts & Strogatz (1998) - Small-world
+- Newman (2006) - Modularity
+
+METHODS - THRESHOLD:
+- Garrison et al. (2015) - Threshold effects
+
+METHODS - CONSENSUS:
+- Lancichinetti & Fortunato (2012) - Consensus methods
+- Dietterich (2000) - Ensemble rationale
+
+METHODS - IMPUTATION:
+- van Buuren & Groothuis-Oudshoorn (2011) - MICE
+
+SOFTWARE:
+- Csárdi & Nepusz (2006) - igraph
+- Chang et al. (2023) - Shiny
+- R Core Team (2024) - R
+
+VALIDATION:
+- Lee et al. (2026) - Published application
+
+COMPARISON:
+- Whitfield-Gabrieli & Nieto-Castanon (2012) - CONN
+- Jenkinson et al. (2012) - FSL
+
+================================================================================
+
+Total References: 52
+
+Note: References marked "ESSENTIAL CITATION" should definitely be included.
+Others can be selectively included based on space constraints.
+
+================================================================================

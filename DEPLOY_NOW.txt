@@ -1,0 +1,89 @@
+═══════════════════════════════════════════════════════════════
+  CONSENSUSCONNECTR - QUICK DEPLOYMENT TO SHINYAPPS.IO
+═══════════════════════════════════════════════════════════════
+
+Follow these 3 steps in order:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1: INSTALL DEPENDENCIES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+In R console, run:
+
+    source("install_dependencies.R")
+
+This installs all required packages including:
+  • CRAN packages (shiny, igraph, etc.)
+  • Bioconductor packages (impute, preprocessCore)
+  • Optional packages (pracma, TDA)
+
+⏱  Estimated time: 5-10 minutes
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2: CONFIGURE SHINYAPPS.IO ACCOUNT (First time only)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If you haven't connected to shinyapps.io yet:
+
+    library(rsconnect)
+    rsconnect::setAccountInfo(
+      name = "your-username",
+      token = "your-token",
+      secret = "your-secret"
+    )
+
+Get your credentials from:
+https://www.shinyapps.io/admin/#/tokens
+
+⏱  Estimated time: 2 minutes
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3: DEPLOY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Option A - Automated (Recommended):
+
+    source("deploy.R")
+
+  This script will:
+    ✓ Check all dependencies
+    ✓ Verify configuration
+    ✓ Optionally test locally
+    ✓ Deploy to shinyapps.io
+
+Option B - Manual:
+
+    library(rsconnect)
+    deployApp(
+      appName = "ConsensusConnectR",
+      forceUpdate = TRUE
+    )
+
+⏱  Estimated time: 10-15 minutes
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Error: "pracma/TDA not installed"
+➜ Run: source("install_dependencies.R")
+
+Error: "impute/preprocessCore not installed"
+➜ Run: BiocManager::install(c("impute", "preprocessCore"))
+
+Deployment times out
+➜ Just run deploy.R again - it will resume
+
+App crashes on shinyapps.io
+➜ Check logs at: https://www.shinyapps.io/admin/
+
+For detailed help, see: DEPLOYMENT_GUIDE.md
+
+
+═══════════════════════════════════════════════════════════════
+After deployment, your app will be at:
+https://your-username.shinyapps.io/ConsensusConnectR/
+═══════════════════════════════════════════════════════════════

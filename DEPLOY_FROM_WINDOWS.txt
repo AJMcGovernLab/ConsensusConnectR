@@ -1,0 +1,160 @@
+═══════════════════════════════════════════════════════════════
+  DEPLOY CONSENSUSCONNECTR FROM WINDOWS
+  (Files in WSL, deploying from Windows R/RStudio)
+═══════════════════════════════════════════════════════════════
+
+THE PROBLEM:
+  Your app files are in WSL but you're deploying from Windows R
+  Path: //wsl.localhost/Ubuntu/home/ajukearth/brain-network-analysis/Persistence3
+
+THE SOLUTION:
+  Use explicit file list to exclude unused modules
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OPTION 1: AUTOMATED SCRIPT (EASIEST)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+In Windows R/RStudio:
+
+    setwd("//wsl.localhost/Ubuntu/home/ajukearth/brain-network-analysis/Persistence3")
+    source("deploy_windows.R")
+
+That's it! The script handles everything.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OPTION 2: MANUAL DEPLOYMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+In Windows R/RStudio, run this:
+
+# 1. Set working directory
+setwd("//wsl.localhost/Ubuntu/home/ajukearth/brain-network-analysis/Persistence3")
+
+# 2. Define files to deploy
+app_files <- c(
+  "app.R",
+  "modules/analysis_functions.R",
+  "modules/visualization_functions.R",
+  "modules/ui_components.R",
+  "modules/download_simple.R",
+  "modules/consensus_analytics.R",
+  "modules/consensus_visualizations.R",
+  "modules/statistical_tests.R",
+  "modules/topological_analysis.R",
+  "modules/advanced_networks.R",
+  "modules/meta_consensus.R",
+  "modules/complete_plot_system.R",
+  "modules/export_functions.R"
+)
+
+# 3. Deploy
+library(rsconnect)
+deployApp(
+  appFiles = app_files,
+  appName = "ConsensusConnectR",
+  account = "ajmg",
+  forceUpdate = TRUE,
+  lint = FALSE
+)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IF PACKAGES ARE MISSING (Windows R)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Run this in Windows R:
+
+# CRAN packages
+install.packages(c(
+  "shiny", "shinydashboard", "DT", "shinyjs", "colourpicker",
+  "ggplot2", "scales", "viridis", "corrplot", "igraph",
+  "dplyr", "psych", "corpcor", "mice", "RColorBrewer",
+  "pracma", "TDA", "rsconnect"
+))
+
+# Bioconductor packages
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install(c("impute", "preprocessCore"))
+install.packages("WGCNA")
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ALTERNATIVE: DEPLOY FROM WSL R
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If Windows deployment fails, deploy from WSL instead:
+
+# In WSL terminal
+cd /home/ajukearth/brain-network-analysis/Persistence3
+R
+
+Then in R:
+
+# First time only: Install and configure rsconnect
+install.packages("rsconnect")
+library(rsconnect)
+rsconnect::setAccountInfo(
+  name = "ajmg",
+  token = "YOUR_TOKEN",
+  secret = "YOUR_SECRET"
+)
+
+# Deploy
+source("deploy.R")
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHY THE EXPLICIT FILE LIST?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The .rscignore file doesn't work when deploying from Windows to WSL paths.
+
+Files being EXCLUDED (because they're not used):
+  ❌ shiny_plot_harvester.R (needs webshot2)
+  ❌ comprehensive_plot_extractor.R (development tool)
+  ❌ dynamic_plot_generator.R (development tool)
+  ❌ download_manager.R (superseded)
+  ❌ download_manager_simple.R (superseded)
+
+Files being INCLUDED (actually used by app):
+  ✓ app.R
+  ✓ 13 module files listed above
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Error: "pracma/TDA not installed"
+➜ Install in Windows: install.packages(c("pracma", "TDA"))
+
+Error: "impute/preprocessCore not installed"
+➜ Install in Windows: BiocManager::install(c("impute", "preprocessCore"))
+
+Error: "Cannot bundle app"
+➜ Check working directory: getwd()
+➜ Should show: //wsl.localhost/Ubuntu/home/ajukearth/...
+
+Deployment succeeds but app crashes
+➜ Check logs: https://www.shinyapps.io/admin/
+➜ Test locally first: shiny::runApp()
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NEED MORE HELP?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+See detailed guide: WINDOWS_DEPLOYMENT_GUIDE.md
+
+
+═══════════════════════════════════════════════════════════════
+QUICK START (Copy-Paste This):
+
+setwd("//wsl.localhost/Ubuntu/home/ajukearth/brain-network-analysis/Persistence3")
+source("deploy_windows.R")
+
+═══════════════════════════════════════════════════════════════

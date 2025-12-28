@@ -1,0 +1,8 @@
+# Makevars.win - Windows compilation flags for OpenMP support
+# This enables OpenMP parallelization with Rtools on Windows
+
+PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)
+PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
+
+# Enable C++11 standard
+CXX_STD = CXX11
