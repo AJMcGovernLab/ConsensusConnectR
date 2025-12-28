@@ -49,10 +49,7 @@ The C++ backend provides significant performance improvements for permutation te
 ### Option 1: Run directly from GitHub (no download required)
 
 ```r
-# Authenticate with GitHub (required for private repo)
-# You'll need a Personal Access Token from: https://github.com/settings/tokens
-shiny::runGitHub("ConsensusConnectR", "AJMcGovernLab",
-                  auth_token = "your_github_token_here")
+shiny::runGitHub("ConsensusConnectR", "AJMcGovernLab")
 ```
 
 Missing packages will be installed automatically on first run.
