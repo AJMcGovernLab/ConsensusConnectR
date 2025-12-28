@@ -330,7 +330,7 @@ calibrate_permutation_time <- function(analysis_results,
 #' @param group1 Name of group 1
 #' @param group2 Name of group 2
 #' @param n_calibration_perms Number of permutations to run for calibration (default: 20)
-#' @param test_workers Vector of worker counts to test for R fallback (default: c(1, 2, 4, 8, 16))
+#' @param target_workers Specific worker count to calibrate for (default: NULL = auto-detect)
 #' @param methods Vector of correlation methods to include (optional)
 #' @param verbose Print diagnostic messages (default: FALSE)
 #' @return Named list with calibrated timing, backend info, and performance estimates
@@ -339,7 +339,7 @@ calibrate_parallel_performance <- function(analysis_results,
                                             group1,
                                             group2,
                                             n_calibration_perms = 20,
-                                            test_workers = c(1, 2, 4, 8, 16),
+                                            target_workers = NULL,
                                             methods = NULL,
                                             verbose = FALSE) {
   # Extract networks
@@ -458,6 +458,20 @@ calibrate_parallel_performance <- function(analysis_results,
   # =========================================================================
   if (verbose) message("Using R backend for calibration...")
 
+  # Determine target worker count
+  max_available_cores <- parallel::detectCores()
+  if (is.null(target_workers) || target_workers == "auto") {
+    # Default: use all cores minus 1 (leave one for system)
+    target_workers <- max(1, max_available_cores - 1)
+  } else {
+    target_workers <- as.integer(target_workers)
+  }
+  # Ensure target_workers doesn't exceed available cores
+
+  target_workers <- min(target_workers, max_available_cores)
+
+  if (verbose) message("Target worker count: ", target_workers)
+
   # Phase 1: Measure serial computation time
   if (verbose) message("Phase 1: Measuring R serial computation time...")
 
@@ -473,18 +487,14 @@ calibrate_parallel_performance <- function(analysis_results,
 
   if (verbose) message("  R serial time per permutation: ", round(time_per_perm_ms, 2), " ms")
 
-  # Phase 2: Measure parallel overhead (if parallel available)
+  # Phase 2: Measure parallel overhead for target worker count only
   parallel_results <- list()
-  max_available_cores <- parallel::detectCores()
 
-  # Filter test_workers to only include valid values
-  test_workers <- test_workers[test_workers > 1 & test_workers <= max_available_cores]
+  if (PARALLEL_AVAILABLE && target_workers > 1) {
+    if (verbose) message("Phase 2: Measuring R parallel overhead for ", target_workers, " workers...")
 
-  if (PARALLEL_AVAILABLE && length(test_workers) > 0) {
-    if (verbose) message("Phase 2: Measuring R parallel overhead...")
-
-    for (n_w in test_workers) {
-      if (verbose) message("  Testing ", n_w, " workers...")
+    n_w <- target_workers
+    if (verbose) message("  Testing ", n_w, " workers...")
 
       tryCatch({
         # Time worker startup
@@ -544,40 +554,40 @@ calibrate_parallel_performance <- function(analysis_results,
         # Restore plan on error
         tryCatch(future::plan(old_plan), error = function(e2) NULL)
       })
-    }
   } else {
-    if (verbose) message("Phase 2: Skipped (parallel not available or no workers to test)")
+    if (verbose) message("Phase 2: Skipped (parallel not available or target_workers = 1)")
   }
 
-  # Determine optimal configuration
-  best_config <- list(workers = 1, time_ms = serial_elapsed_ms, speedup = 1.0)
-  for (pr in parallel_results) {
-    if (pr$total_time_ms < best_config$time_ms) {
-      best_config <- list(workers = pr$workers, time_ms = pr$total_time_ms, speedup = pr$effective_speedup)
-    }
-  }
+  # Get results for target worker count (if tested)
+  target_key <- as.character(target_workers)
+  target_result <- parallel_results[[target_key]]
 
-  # Calculate average spawn overhead per worker
-  spawn_overhead_per_worker <- if (length(parallel_results) > 0) {
-    mean(sapply(parallel_results, function(x) x$spawn_per_worker_ms))
+  # Calculate spawn overhead per worker
+  spawn_overhead_per_worker <- if (!is.null(target_result)) {
+    target_result$spawn_per_worker_ms
   } else {
     3000  # Default 3 seconds per worker on Windows
   }
 
-  # Determine if parallel is beneficial
-  use_parallel <- best_config$workers > 1 && best_config$speedup > 1.1
+  # Determine if parallel is beneficial (target workers must beat serial by >10%)
+  use_parallel <- !is.null(target_result) && target_result$effective_speedup > 1.1
+  effective_speedup <- if (!is.null(target_result)) target_result$effective_speedup else 1.0
 
-  recommendation <- if (best_config$workers == 1) {
+  recommendation <- if (!use_parallel) {
     "R serial (parallel overhead too high) - consider installing Rcpp/RcppArmadillo for C++ backend"
   } else {
-    sprintf("R parallel: %d workers for %.1fx speedup", best_config$workers, best_config$speedup)
+    sprintf("R parallel: %d workers for %.1fx speedup", target_workers, effective_speedup)
   }
+
+  # Always return target_workers as optimal (that's what user selected/will use)
+  optimal_workers <- if (use_parallel) target_workers else 1
 
   if (verbose) {
     message("\nCalibration complete:")
     message("  R serial time per perm: ", round(time_per_perm_ms, 2), " ms")
+    message("  Target workers: ", target_workers)
     message("  Spawn overhead/worker: ", round(spawn_overhead_per_worker, 0), " ms")
-    message("  Optimal workers: ", best_config$workers)
+    message("  Parallel beneficial: ", use_parallel)
     message("  Recommendation: ", recommendation)
   }
 
@@ -589,8 +599,9 @@ calibrate_parallel_performance <- function(analysis_results,
     n_calibration_perms = n_calibration_perms,
     backend = "r_fallback",
     parallel_results = parallel_results,
-    optimal_workers = best_config$workers,
-    optimal_speedup = best_config$speedup,
+    target_workers = target_workers,
+    optimal_workers = optimal_workers,
+    optimal_speedup = effective_speedup,
     use_parallel = use_parallel,
     spawn_overhead_per_worker_ms = spawn_overhead_per_worker,
     recommendation = recommendation,

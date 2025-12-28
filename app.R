@@ -9455,21 +9455,29 @@ server <- function(input, output, session) {
       cpp_available <- exists("parallel_permutation_test_cpp", mode = "function")
     }
 
+    # Determine target worker count from user selection
+    worker_input <- input$n_parallel_workers
+    target_workers <- if (is.null(worker_input) || worker_input == "auto") {
+      max(1, parallel::detectCores() - 1)
+    } else {
+      as.numeric(worker_input)
+    }
+
     progress_msg <- if (cpp_available) {
       "Calibrating C++ performance..."
     } else {
-      "Calibrating runtime (testing R parallel overhead - may take a minute)..."
+      sprintf("Calibrating runtime for %d workers...", as.integer(target_workers))
     }
 
     withProgress(message = progress_msg, value = 0.3, {
-      # Use the new comprehensive calibration that detects C++ backend
+      # Calibrate for the specific worker count that will be used
       calibration <- tryCatch({
         calibrate_parallel_performance(
           analysis_results,
           input$regional_contrib_group1,
           input$regional_contrib_group2,
-          n_calibration_perms = if (cpp_available) 50 else 20,  # More perms for C++ (fast)
-          test_workers = c(2, 4, 8, 16),  # Only used if C++ not available
+          n_calibration_perms = if (cpp_available) 50 else 20,
+          target_workers = target_workers,
           methods = selected_methods(),
           verbose = FALSE
         )
