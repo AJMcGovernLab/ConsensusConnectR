@@ -54,13 +54,19 @@ calculate_required_permutations <- function(n_tests,
   # Check if we have sufficient resolution
   sufficient_resolution <- min_detectable_p < stringent_threshold
 
+  # Ensure integer values for sprintf %d format
+  n_tests_int <- as.integer(n_tests)
+  n_permutations_int <- as.integer(n_permutations)
+  safety_factor_int <- as.integer(safety_factor)
+  n_required_int <- as.integer(n_required)
+
   # Generate explanation
   explanation <- sprintf(
     "Testing %d comparisons at alpha=%.2f requires %d permutations (formula: ceiling(%d/%.2f)*%d = %d). Min detectable p-value: %.2e. %s",
-    n_tests, alpha, n_permutations,
-    n_tests, alpha, safety_factor, n_required,
+    n_tests_int, alpha, n_permutations_int,
+    n_tests_int, alpha, safety_factor_int, n_required_int,
     min_detectable_p,
-    ifelse(capped, sprintf("CAPPED from %d due to computational limits.", n_required),
+    ifelse(capped, sprintf("CAPPED from %d due to computational limits.", n_required_int),
            ifelse(sufficient_resolution, "Sufficient resolution for FDR correction.",
                   "WARNING: May have insufficient resolution for stringent FDR correction."))
   )
