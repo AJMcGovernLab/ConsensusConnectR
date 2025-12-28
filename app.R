@@ -7,11 +7,11 @@
 # Check and install required packages if not already installed
 
 required_packages <- c(
-
   # Core Shiny packages
-  "shiny", "shinydashboard", "DT", "shinyjs", "colourpicker",
+
+  "shiny", "shinydashboard", "DT", "shinyjs", "colourpicker", "shinyWidgets",
   # Data manipulation and visualization
-  "ggplot2", "scales", "dplyr",
+  "ggplot2", "scales", "dplyr", "tidyr", "plotly",
   # Correlation methods
   "psych", "corpcor",
   # Network analysis
@@ -19,23 +19,34 @@ required_packages <- c(
   # Imputation
   "mice",
   # Visualization
-  "corrplot", "viridis", "pheatmap",
+  "corrplot", "viridis", "pheatmap", "RColorBrewer",
   # Clustering
   "cluster", "dendextend",
   # Numerical methods
-  "pracma"
+  "pracma",
+  # Parallel processing
+  "future", "furrr", "promises", "parallelly"
 )
 
+# Optional packages for C++ backend (significant performance boost)
+cpp_packages <- c("Rcpp", "RcppArmadillo")
+
 # Function to check and install packages
-install_if_missing <- function(packages) {
+install_if_missing <- function(packages, optional = FALSE) {
   missing_packages <- packages[!sapply(packages, requireNamespace, quietly = TRUE)]
 
   if (length(missing_packages) > 0) {
+    if (optional) {
+      message(sprintf("Optional package(s) not installed: %s",
+                      paste(missing_packages, collapse = ", ")))
+      message("Install them for better performance: install.packages(c('Rcpp', 'RcppArmadillo'))")
+      return(invisible(NULL))
+    }
+
     message(sprintf("Installing %d missing package(s): %s",
                     length(missing_packages),
                     paste(missing_packages, collapse = ", ")))
 
-    # Try to install from CRAN
     for (pkg in missing_packages) {
       tryCatch({
         install.packages(pkg, repos = "https://cloud.r-project.org", quiet = TRUE)
@@ -47,8 +58,11 @@ install_if_missing <- function(packages) {
   }
 }
 
-# Run the installer
+# Install required packages
 install_if_missing(required_packages)
+
+# Check for optional C++ packages (don't force install - requires compiler)
+install_if_missing(cpp_packages, optional = TRUE)
 
 # ============================================================================
 # LOAD PACKAGES
