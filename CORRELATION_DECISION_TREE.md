@@ -73,24 +73,31 @@ Is n >= 10?
 ### 4. Shrinkage Correlation (Ledoit-Wolf Estimator)
 
 ```
-Is n < p?
+Are there zero-variance (constant) columns?
     |
-    +-- YES --> RECOMMENDED (Sample covariance is singular)
+    +-- YES --> UNAVAILABLE (cor.shrink fails with constant columns)
     |
-    +-- Is n < 2p?
-        |
-        +-- YES --> AVAILABLE (Helps with estimation stability)
-        |
-        +-- NO  --> OPTIONAL (Not needed when n >> p)
+    +-- NO --> Is n < p?
+                |
+                +-- YES --> RECOMMENDED (Sample covariance is singular)
+                |
+                +-- Is n < 2p?
+                    |
+                    +-- YES --> AVAILABLE (Helps with estimation stability)
+                    |
+                    +-- NO  --> OPTIONAL (Not needed when n >> p)
 ```
 
 | Condition | Status | Note |
 |-----------|--------|------|
+| Any constant columns | UNAVAILABLE | cor.shrink() cannot handle zero-variance columns |
 | n < p | **RECOMMENDED** | Sample covariance matrix is singular; shrinkage regularizes it |
 | p <= n < 2p | AVAILABLE | Improves estimation stability |
 | n >= 2p | OPTIONAL | Standard methods are sufficient |
 
 **Rationale**: When sample size is smaller than the number of variables, the sample covariance matrix is singular and cannot be inverted. Shrinkage towards a structured target (identity matrix) regularizes the estimate.
+
+**Note**: The Ledoit-Wolf shrinkage estimator requires all columns to have non-zero variance. Columns with constant values (zero variance) will cause the estimation to fail.
 
 **Mathematical basis**:
 ```

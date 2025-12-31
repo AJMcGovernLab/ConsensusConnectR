@@ -4001,7 +4001,23 @@ server <- function(input, output, session) {
     }
 
     # Shrinkage - recommended when n < p (uses Ledoit-Wolf estimator)
-    if(n_min < p) {
+    # Check for zero-variance columns which cause cor.shrink to fail
+    zero_var_cols <- 0
+    if(length(region_cols) > 0) {
+      col_vars <- sapply(region_cols, function(col) {
+        if(col %in% names(data)) {
+          vals <- data[[col]]
+          vals <- vals[!is.na(vals)]
+          if(length(vals) > 1) return(var(vals)) else return(0)
+        }
+        return(NA)
+      })
+      zero_var_cols <- sum(col_vars == 0 | is.na(col_vars), na.rm = TRUE)
+    }
+
+    if(zero_var_cols > 0) {
+      recommendations$shrinkage <- list(status = "unavailable", note = paste0(zero_var_cols, " constant columns detected"))
+    } else if(n_min < p) {
       recommendations$shrinkage <- list(status = "recommended", note = paste0("n < p (", n_display, " < ", p, ")"))
     } else if(n_min < p * 2) {
       recommendations$shrinkage <- list(status = "available", note = "Helps with estimation stability")

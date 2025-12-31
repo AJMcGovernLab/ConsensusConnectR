@@ -232,7 +232,8 @@ compute_correlation_methods <- function(data_matrix, selected_methods = c("pears
   }
 
   # 4. Shrinkage correlation (optimal for small samples)
-  # cor.shrink requires: no NAs, no zero-variance columns, sufficient samples
+  # Data is already imputed by MICE, so no NAs expected
+  # If shrinkage fails, skip it entirely to maintain consistent consensus calculation
   if("shrinkage" %in% selected_methods) {
     tryCatch({
       if(!requireNamespace("corpcor", quietly = TRUE)) {
@@ -240,54 +241,19 @@ compute_correlation_methods <- function(data_matrix, selected_methods = c("pears
       } else {
         library(corpcor)
 
-        # Initialize variables
-        data_for_shrink <- NULL
-        zero_var_cols <- integer(0)
+        # Check for zero-variance columns (causes cor.shrink to fail)
+        # This can happen if imputation produces constant values for a column
+        col_vars <- apply(data_matrix, 2, var)
+        zero_var_cols <- which(col_vars == 0 | is.na(col_vars))
 
-        # Pre-flight validation for cor.shrink
-        # 1. Check for NAs (should be handled by MICE, but verify)
-        if(any(is.na(data_matrix))) {
-          complete_idx <- complete.cases(data_matrix)
-          if(sum(complete_idx) >= 3) {
-            data_for_shrink <- data_matrix[complete_idx, , drop = FALSE]
-          } else {
-            warning(sprintf("Shrinkage skipped: only %d complete cases (need >= 3)", sum(complete_idx)))
-          }
+        if(length(zero_var_cols) > 0) {
+          warning(sprintf("Shrinkage skipped: %d zero-variance columns detected", length(zero_var_cols)))
+        } else if(nrow(data_matrix) < 3) {
+          warning(sprintf("Shrinkage skipped: insufficient samples (%d < 3)", nrow(data_matrix)))
         } else {
-          data_for_shrink <- data_matrix
-        }
-
-        # 2. Check for zero-variance columns (causes cor.shrink to fail)
-        if(!is.null(data_for_shrink)) {
-          col_vars <- apply(data_for_shrink, 2, var)
-          zero_var_cols <- which(col_vars == 0 | is.na(col_vars))
-
-          if(length(zero_var_cols) > 0) {
-            warning(sprintf("Shrinkage: removing %d zero-variance columns", length(zero_var_cols)))
-            data_for_shrink <- data_for_shrink[, -zero_var_cols, drop = FALSE]
-
-            if(ncol(data_for_shrink) < 2) {
-              warning("Shrinkage skipped: fewer than 2 columns with variance")
-              data_for_shrink <- NULL
-            }
-          }
-        }
-
-        # 3. Compute shrinkage correlation if data is valid
-        if(!is.null(data_for_shrink) && nrow(data_for_shrink) >= 3 && ncol(data_for_shrink) >= 2) {
-          shrink_result <- cor.shrink(data_for_shrink, verbose = FALSE)
-
-          # If we removed columns, expand back to full matrix with NAs for removed columns
-          if(length(zero_var_cols) > 0) {
-            full_result <- matrix(NA, nrow = n_vars, ncol = n_vars)
-            rownames(full_result) <- colnames(full_result) <- colnames(data_matrix)
-            diag(full_result) <- 1
-            kept_cols <- setdiff(1:n_vars, zero_var_cols)
-            full_result[kept_cols, kept_cols] <- shrink_result
-            methods$shrinkage <- full_result
-          } else {
-            methods$shrinkage <- shrink_result
-          }
+          # All checks passed - compute shrinkage
+          shrink_result <- cor.shrink(data_matrix, verbose = FALSE)
+          methods$shrinkage <- shrink_result
         }
       }
     }, error = function(e) {
