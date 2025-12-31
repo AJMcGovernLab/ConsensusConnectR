@@ -534,45 +534,51 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
     ),
 
     "networkPlots" = list(
-      condition = function() !is.null(analysis_results$method_percolation_results),
+      condition = function() {
+        method <- get_current_method()
+        method_data <- analysis_results$method_percolation_results[[method]]
+        !is.null(method_data) && !is.null(method_data$networks)
+      },
       render = function() {
         method <- get_current_method()
         method_data <- analysis_results$method_percolation_results[[method]]
-        if(!is.null(method_data) && !is.null(method_data$networks)) {
-          create_enhanced_network_plots(
-            networks = method_data$networks,
-            brain_areas = ui_state$brain_areas,
-            area_colors = ui_state$area_colors,
-            group_colors = ui_state$group_colors,
-            layout = get_current_layout()
-          )
-        }
+        create_enhanced_network_plots(
+          networks = method_data$networks,
+          brain_areas = ui_state$brain_areas,
+          area_colors = ui_state$area_colors,
+          group_colors = ui_state$group_colors,
+          layout = get_current_layout()
+        )
       }
     ),
 
     "networkGalleryPlot" = list(
-      condition = function() !is.null(analysis_results$method_percolation_results),
+      condition = function() {
+        method <- get_current_method()
+        method_data <- analysis_results$method_percolation_results[[method]]
+        !is.null(method_data) && !is.null(method_data$networks)
+      },
       render = function() {
         method <- get_current_method()
         method_data <- analysis_results$method_percolation_results[[method]]
-        if(!is.null(method_data) && !is.null(method_data$networks)) {
-          render_network_gallery(
-            method_data$networks,
-            ui_state$brain_areas,
-            ui_state$area_colors
-          )
-        }
+        render_network_gallery(
+          method_data$networks,
+          ui_state$brain_areas,
+          ui_state$area_colors
+        )
       }
     ),
 
     "networkDashboardPlot" = list(
-      condition = function() !is.null(analysis_results$method_percolation_results),
+      condition = function() {
+        method <- get_current_method()
+        method_data <- analysis_results$method_percolation_results[[method]]
+        !is.null(method_data) && !is.null(method_data$global_metrics)
+      },
       render = function() {
         method <- get_current_method()
         method_data <- analysis_results$method_percolation_results[[method]]
-        if(!is.null(method_data) && !is.null(method_data$global_metrics)) {
-          render_network_dashboard(method_data$global_metrics, get_group_colors())
-        }
+        render_network_dashboard(method_data$global_metrics, get_group_colors())
       }
     ),
 
@@ -1841,6 +1847,7 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
 
   # Update current plot when modal opens
   observeEvent(input$hover_download_plot_id, {
+    message(sprintf("[Plot Download] Modal opened for plot: %s", input$hover_download_plot_id))
     current_plot_id(input$hover_download_plot_id)
   })
 
@@ -1854,6 +1861,10 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     width_in <- as.numeric(input$hover_download_width %||% 10)
     height_in <- as.numeric(input$hover_download_height %||% 8)
 
+    # Debug logging
+    message(sprintf("[Plot Download Preview] Rendering preview for plot_id: %s (dims: %.1f x %.1f)",
+                    if(is.null(plot_id)) "NULL" else plot_id, width_in, height_in))
+
     # Show placeholder if no plot selected
     if(is.null(plot_id)) {
       par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
@@ -1865,6 +1876,8 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
 
     # Check if plot exists in registry
     if(!plot_id %in% names(registry)) {
+      message(sprintf("[Plot Download Preview] Plot '%s' not found in registry. Available: %s",
+                      plot_id, paste(head(names(registry), 10), collapse = ", ")))
       par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
       text(0.5, 0.5, "Plot not in registry", col = "#dc3545", cex = 1.0)
@@ -1874,7 +1887,16 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     plot_info <- registry[[plot_id]]
 
     # Check if data is available
-    if(!plot_info$condition()) {
+    condition_met <- tryCatch(
+      plot_info$condition(),
+      error = function(e) {
+        message(sprintf("[Plot Download Preview] Condition check error for '%s': %s", plot_id, conditionMessage(e)))
+        FALSE
+      }
+    )
+
+    if(!condition_met) {
+      message(sprintf("[Plot Download Preview] Condition not met for '%s'", plot_id))
       par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
       text(0.5, 0.5, "Run analysis first", col = "#ffc107", cex = 1.0)
@@ -1882,21 +1904,35 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     }
 
     # Try to render actual plot with dimensions shown in title
+    message(sprintf("[Plot Download Preview] Attempting to render '%s'", plot_id))
+    render_error <- NULL
     tryCatch({
       # Use outer margin to show dimensions at the top
       par(oma = c(0, 0, 1.5, 0), mar = c(2, 2, 1, 1), cex = 0.5, bg = "white")
+
+      # Call render within a tryCatch to capture any errors
       plot_info$render()
-      # Add dimensions in outer margin
+      message(sprintf("[Plot Download Preview] Successfully rendered '%s'", plot_id))
+
+      # Add dimensions in outer margin (only if we got here without error)
       mtext(sprintf("Output: %.1f\" x %.1f\"", width_in, height_in),
             outer = TRUE, line = 0.3, cex = 0.7, font = 2, col = "#3498db")
     }, error = function(e) {
+      render_error <<- conditionMessage(e)
+
+      # Log error to console for debugging
+      message(sprintf("[Plot Download Preview] Error rendering '%s': %s", plot_id, render_error))
+
       # If rendering fails, show error with dimensions
       par(mar = c(0, 0, 0, 0), bg = "#fff3cd")
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
            xlim = c(0, 1), ylim = c(0, 1))
-      text(0.5, 0.6, "Preview unavailable", col = "#856404", cex = 0.9)
-      text(0.5, 0.4, sprintf("Output: %.1f\" x %.1f\"", width_in, height_in),
-           col = "#333", cex = 0.8, font = 2)
+      text(0.5, 0.7, "Preview error", col = "#856404", cex = 0.8)
+      # Show truncated error message
+      err_msg <- substr(render_error, 1, 50)
+      text(0.5, 0.5, err_msg, col = "#6c757d", cex = 0.6)
+      text(0.5, 0.3, sprintf("Output: %.1f\" x %.1f\"", width_in, height_in),
+           col = "#333", cex = 0.7, font = 2)
     })
 
   }, height = 150, bg = "transparent")
