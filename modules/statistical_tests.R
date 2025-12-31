@@ -3689,23 +3689,14 @@ brute_force_discovery <- function(analysis_results,
     message("[DEBUG brute_force] Similarity results: ", nrow(sim_results))
   }
 
-  # ========== PHASE 3: Filter for synergistic combinations only ==========
-  if(verbose) message("[DEBUG brute_force] PHASE 3: Filtering for synergistic combinations...")
-  # For top N selection, only include:
-  # - Singles (size == 1): always included (no synergy concept)
-  # - Multi-region (size > 1): only if synergy > 0 (true functional units)
-  # This focuses permutation testing on combinations that work TOGETHER, not redundant ones
-
-  filter_synergistic <- function(df) {
-    # Keep singles OR multi-region with positive synergy
-    is_single <- df$size == 1
-    is_synergistic <- !is.na(df$synergy) & df$synergy > 0
-    df[is_single | is_synergistic, ]
-  }
-
-  dissim_synergistic <- filter_synergistic(dissim_results)
-  sim_synergistic <- filter_synergistic(sim_results)
-  if(verbose) message("[DEBUG brute_force] After synergy filter - Dissim: ", nrow(dissim_synergistic), ", Sim: ", nrow(sim_synergistic))
+  # ========== PHASE 3: Synergy column retained (no filtering) ==========
+  # Previously filtered for synergistic combinations only, but this introduced selection bias
+  # before permutation testing. Now we test ALL combinations and let users filter results
+  # by synergy status post-hoc. The synergy column is retained for interpretation.
+  if(verbose) message("[DEBUG brute_force] PHASE 3: Synergy computed (no pre-filtering - all combinations tested)")
+  if(verbose) message("[DEBUG brute_force] Combinations with synergy>0 - Dissim: ",
+                      sum(dissim_results$synergy > 0, na.rm = TRUE), "/", nrow(dissim_results),
+                      ", Sim: ", sum(sim_results$synergy > 0, na.rm = TRUE), "/", nrow(sim_results))
 
   # ========== PHASE 4: Filter candidates for permutation testing ==========
   if(verbose) message("[DEBUG brute_force] PHASE 4: Applying candidate filter '", candidate_filter, "'...")
@@ -3742,8 +3733,8 @@ brute_force_discovery <- function(analysis_results,
     }
   }
 
-  top_dissim <- apply_candidate_filter(dissim_synergistic, candidate_filter)
-  top_sim <- apply_candidate_filter(sim_synergistic, candidate_filter)
+  top_dissim <- apply_candidate_filter(dissim_results, candidate_filter)
+  top_sim <- apply_candidate_filter(sim_results, candidate_filter)
   if(verbose) {
     message("[DEBUG brute_force] After candidate filter - Dissim: ", nrow(top_dissim), ", Sim: ", nrow(top_sim))
     message("[DEBUG brute_force] Time: ", Sys.time())
