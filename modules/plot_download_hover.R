@@ -375,11 +375,11 @@ plot_download_modal_ui <- function() {
       # Body - Form inputs
       div(
         class = "plot-download-modal-body",
-        # Aspect Ratio Preview
+        # Plot Preview
         div(
           class = "plot-preview-container",
-          div(class = "plot-preview-label", "Output Size"),
-          plotOutput("hover_download_preview", height = "120px")
+          div(class = "plot-preview-label", "Preview"),
+          plotOutput("hover_download_preview", height = "150px")
         ),
         # DPI Selection
         div(
@@ -1069,36 +1069,143 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
 
     # =========================================================================
     # REGIONAL CONTRIBUTION ANALYSIS PLOTS
-    # Note: These plots use session-specific reactive data that can't be
-    # accessed by the hover download system. Use screenshot or main export.
+    # Uses analysis_results$regional_contribution stored by observer in app.R
     # =========================================================================
     "regionalContributionBarPlot" = list(
-      condition = function() TRUE,  # Always show as available
+      condition = function() !is.null(analysis_results$regional_contribution),
       render = function() {
-        par(mar = c(2, 2, 3, 2))
-        plot(1, type = "n", axes = FALSE, xlab = "", ylab = "",
-             main = "Regional Contribution Analysis", cex.main = 1.1)
-        text(1, 1, "This plot uses session-specific data.\nPlease use screenshot or the main\nConsensus Download to export.", cex = 0.95, col = "#666")
+        results <- analysis_results$regional_contribution
+        if(is.null(results)) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "Run Regional Contribution Analysis first", cex = 1.1, col = "gray50")
+          return()
+        }
+
+        # Handle artificial/brute force mode
+        if(!is.null(results$mode) && results$mode == "artificial") {
+          if(!is.null(results$method) && results$method == "brute_force") {
+            discovery <- results$discovery
+            if(!is.null(discovery) && !is.null(discovery$top_dissimilarity)) {
+              par(mfrow = c(1, 2), mar = c(8, 4, 3, 1))
+              top_d <- head(discovery$top_dissimilarity, 10)
+              if(nrow(top_d) > 0) {
+                colors_d <- ifelse(top_d$significant, "#E74C3C", "#FFCCCC")
+                barplot(top_d$contribution, names.arg = top_d$nodes, las = 2,
+                        col = colors_d, cex.names = 0.6, main = "Top Dissimilarity",
+                        ylab = "Contribution")
+              }
+              top_s <- head(discovery$top_similarity, 10)
+              if(nrow(top_s) > 0) {
+                colors_s <- ifelse(top_s$significant, "#3498DB", "#CCDDFF")
+                barplot(top_s$contribution, names.arg = top_s$nodes, las = 2,
+                        col = colors_s, cex.names = 0.6, main = "Top Similarity",
+                        ylab = "Contribution")
+              }
+            }
+          } else {
+            # Greedy discovery
+            if(!is.null(results$discovery) && !is.null(results$discovery$best_result)) {
+              par(mar = c(8, 4, 3, 2))
+              best <- results$discovery$best_result
+              nodes <- strsplit(best$nodes, ", ")[[1]]
+              barplot(rep(best$contribution / length(nodes), length(nodes)),
+                      names.arg = nodes, las = 2, col = "#E74C3C",
+                      main = paste("Best Artificial Region (n=", length(nodes), ")", sep = ""),
+                      ylab = "Contribution per Node")
+            }
+          }
+        } else if(!is.null(results$mode) && results$mode == "hypothesis") {
+          # Hypothesis testing mode
+          if(!is.null(results$results) && !is.null(results$results$results)) {
+            par(mar = c(10, 4, 3, 2))
+            res_df <- results$results$results
+            colors <- ifelse(res_df$Significant, "#E74C3C", "#CCCCCC")
+            barplot(res_df$Contribution, names.arg = res_df$Regions, las = 2,
+                    col = colors, cex.names = 0.7, main = "Hypothesis Test Results",
+                    ylab = "Contribution")
+          }
+        } else {
+          # Standard brain area mode
+          if(!is.null(results$regional_results)) {
+            par(mar = c(10, 5, 3, 2))
+            reg <- results$regional_results
+            colors <- ifelse(reg$significant, ifelse(reg$contribution > 0, "#E74C3C", "#3498DB"), "#CCCCCC")
+            barplot(reg$contribution, names.arg = reg$region, las = 2, horiz = TRUE,
+                    col = colors, cex.names = 0.8, main = "Regional Contribution Analysis",
+                    xlab = "Contribution Score")
+            abline(v = 0, lty = 2, col = "gray50")
+          }
+        }
       }
     ),
 
     "regionalContributionCircularPlot" = list(
-      condition = function() TRUE,
+      condition = function() !is.null(analysis_results$regional_contribution),
       render = function() {
+        results <- analysis_results$regional_contribution
+        if(is.null(results)) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "Run Regional Contribution Analysis first", cex = 1.1, col = "gray50")
+          return()
+        }
+
+        # For circular plot, show a summary visualization
         par(mar = c(2, 2, 3, 2))
-        plot(1, type = "n", axes = FALSE, xlab = "", ylab = "",
-             main = "Regional Contribution Network", cex.main = 1.1)
-        text(1, 1, "This plot uses session-specific data.\nPlease use screenshot or the main\nConsensus Download to export.", cex = 0.95, col = "#666")
+        if(!is.null(results$regional_results)) {
+          reg <- results$regional_results
+          n <- nrow(reg)
+          if(n > 0) {
+            # Create a simple circular representation
+            angles <- seq(0, 2*pi, length.out = n + 1)[1:n]
+            x <- cos(angles)
+            y <- sin(angles)
+
+            plot(x, y, type = "n", axes = FALSE, xlab = "", ylab = "",
+                 xlim = c(-1.5, 1.5), ylim = c(-1.5, 1.5), asp = 1,
+                 main = "Regional Contribution Network")
+
+            # Draw nodes
+            colors <- ifelse(reg$significant,
+                           ifelse(reg$contribution > 0, "#E74C3C", "#27AE60"),
+                           "#AAAAAA")
+            sizes <- abs(reg$contribution)
+            sizes <- 1 + (sizes / max(sizes)) * 2
+
+            points(x, y, pch = 19, col = colors, cex = sizes * 1.5)
+            text(x * 1.25, y * 1.25, reg$region, cex = 0.6, srt = angles * 180/pi)
+          }
+        } else {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "Regional Network")
+          text(1, 1, "Standard brain area mode required", cex = 0.9, col = "gray50")
+        }
       }
     ),
 
     "regionalJaccardPlot" = list(
-      condition = function() TRUE,
+      condition = function() !is.null(analysis_results$regional_contribution),
       render = function() {
-        par(mar = c(2, 2, 3, 2))
-        plot(1, type = "n", axes = FALSE, xlab = "", ylab = "",
-             main = "Regional Jaccard Similarity", cex.main = 1.1)
-        text(1, 1, "This plot uses session-specific data.\nPlease use screenshot or the main\nConsensus Download to export.", cex = 0.95, col = "#666")
+        results <- analysis_results$regional_contribution
+        if(is.null(results)) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "Run Regional Contribution Analysis first", cex = 1.1, col = "gray50")
+          return()
+        }
+
+        par(mar = c(10, 5, 3, 2))
+        if(!is.null(results$regional_results) && "jaccard" %in% names(results$regional_results)) {
+          reg <- results$regional_results
+          colors <- colorRampPalette(c("#E74C3C", "#F39C12", "#27AE60"))(100)
+          color_idx <- pmax(1, pmin(100, round(reg$jaccard * 100)))
+
+          barplot(reg$jaccard, names.arg = reg$region, las = 2,
+                  col = colors[color_idx], cex.names = 0.8,
+                  main = "Regional Jaccard Similarity",
+                  ylab = "Jaccard Index", ylim = c(0, 1))
+          abline(h = 0.5, lty = 2, col = "gray50")
+        } else {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "Regional Jaccard")
+          text(1, 1, "Jaccard data not available in current mode", cex = 0.9, col = "gray50")
+        }
       }
     ),
 
@@ -1737,17 +1844,15 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     current_plot_id(input$hover_download_plot_id)
   })
 
-  # Render aspect ratio preview in modal
-  # Shows the width:height ratio the user has selected, not the actual plot
+  # Render plot preview in modal
+  # Shows actual plot scaled to fit, with aspect ratio indicator
   output$hover_download_preview <- renderPlot({
     plot_id <- current_plot_id()
+    registry <- plot_registry()
 
     # Get dimensions from inputs
     width_in <- as.numeric(input$hover_download_width %||% 10)
     height_in <- as.numeric(input$hover_download_height %||% 8)
-
-    # Calculate aspect ratio
-    aspect <- width_in / height_in
 
     # Show placeholder if no plot selected
     if(is.null(plot_id)) {
@@ -1758,43 +1863,63 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
       return()
     }
 
-    # Draw aspect ratio preview box
-    par(mar = c(0.5, 0.5, 0.5, 0.5), bg = "#f8f9fa")
-    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
-         xlim = c(0, 1), ylim = c(0, 1), asp = 1)
-
-    # Calculate box dimensions to show aspect ratio
-    # Box should fit within the plot area and show the aspect ratio
-    if(aspect >= 1) {
-      # Wider than tall
-      box_width <- 0.9
-      box_height <- 0.9 / aspect
-    } else {
-      # Taller than wide
-      box_height <- 0.9
-      box_width <- 0.9 * aspect
+    # Check if plot exists in registry
+    if(!plot_id %in% names(registry)) {
+      par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
+      text(0.5, 0.5, "Plot not in registry", col = "#dc3545", cex = 1.0)
+      return()
     }
 
-    # Center the box
-    box_x <- (1 - box_width) / 2
-    box_y <- (1 - box_height) / 2
+    plot_info <- registry[[plot_id]]
 
-    # Draw the aspect ratio box
-    rect(box_x, box_y, box_x + box_width, box_y + box_height,
-         col = "white", border = "#3498db", lwd = 2)
+    # Check if data is available
+    if(!plot_info$condition()) {
+      par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
+      text(0.5, 0.5, "Run analysis first", col = "#ffc107", cex = 1.0)
+      return()
+    }
 
-    # Add dimension text
-    text(0.5, box_y + box_height + 0.06,
-         sprintf("%.1f\" x %.1f\"", width_in, height_in),
-         col = "#333", cex = 0.9, font = 2)
+    # Try to render actual plot with small margins
+    tryCatch({
+      # Set minimal margins for preview
+      par(mar = c(0.5, 0.5, 0.5, 0.5), cex = 0.6, bg = "white")
+      plot_info$render()
+    }, error = function(e) {
+      # If rendering fails (margin error, etc), show aspect ratio box instead
+      err_msg <- conditionMessage(e)
 
-    # Add plot name (formatted)
-    display_name <- gsub("([A-Z])", " \\1", plot_id)
-    display_name <- gsub("Plot$", "", display_name)
-    display_name <- trimws(display_name)
-    text(0.5, 0.5, display_name, col = "#666", cex = 0.8)
+      par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
+           xlim = c(0, 1), ylim = c(0, 1))
 
-  }, height = 120, bg = "transparent")
+      # Calculate aspect ratio box
+      aspect <- width_in / height_in
+      if(aspect >= 1) {
+        box_width <- 0.8
+        box_height <- 0.8 / aspect
+      } else {
+        box_height <- 0.8
+        box_width <- 0.8 * aspect
+      }
+      box_x <- (1 - box_width) / 2
+      box_y <- (1 - box_height) / 2
+
+      rect(box_x, box_y, box_x + box_width, box_y + box_height,
+           col = "white", border = "#3498db", lwd = 2)
+
+      # Show dimensions
+      text(0.5, 0.9, sprintf("%.1f\" x %.1f\"", width_in, height_in),
+           col = "#333", cex = 0.8, font = 2)
+
+      # Format plot name
+      display_name <- gsub("([A-Z])", " \\1", plot_id)
+      display_name <- gsub("Plot$", "", display_name)
+      text(0.5, 0.5, trimws(display_name), col = "#666", cex = 0.7)
+    })
+
+  }, height = 150, bg = "transparent")
 
   # Download handler
   output$execute_hover_download <- downloadHandler(

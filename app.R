@@ -6968,6 +6968,15 @@ server <- function(input, output, session) {
   # ========================================================================
   # HOVER DOWNLOAD SERVER (per-plot download buttons)
   # ========================================================================
+
+  # Store regional contribution results in analysis_results for hover download access
+  observe({
+    results <- regional_contribution_results()
+    if(!is.null(results)) {
+      analysis_results$regional_contribution <- results
+    }
+  })
+
   hover_download_server(input, output, session, analysis_results, ui_state)
 
   # ========================================================================
