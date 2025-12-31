@@ -232,43 +232,13 @@ compute_correlation_methods <- function(data_matrix, selected_methods = c("pears
   }
 
   # 4. Shrinkage correlation (optimal for small samples)
+  # Note: Data should already be imputed by MICE, so NAs should not be present
   if("shrinkage" %in% selected_methods) {
     tryCatch({
       if(requireNamespace("corpcor", quietly = TRUE)) {
         library(corpcor)
-
-        # cor.shrink() doesn't handle NA values, so use complete cases only
-        complete_rows <- complete.cases(data_matrix)
-        data_complete <- data_matrix[complete_rows, , drop = FALSE]
-        n_complete <- nrow(data_complete)
-
-        # Check if we have enough complete cases for shrinkage
-        if(n_complete < 3) {
-          warning(sprintf("Shrinkage: Only %d complete cases, need at least 3. Using Pearson substitute.", n_complete))
-          if(is.null(methods$pearson)) {
-            methods$shrinkage <- cor(data_matrix, use = "complete.obs", method = "pearson")
-          } else {
-            methods$shrinkage <- methods$pearson
-          }
-        } else {
-          # Check for zero-variance columns in complete data
-          col_vars <- apply(data_complete, 2, var, na.rm = TRUE)
-          zero_var_cols <- which(col_vars == 0 | is.na(col_vars))
-
-          if(length(zero_var_cols) > 0) {
-            warning(sprintf("Shrinkage: %d columns have zero variance. Using Pearson substitute.",
-                            length(zero_var_cols)))
-            if(is.null(methods$pearson)) {
-              methods$shrinkage <- cor(data_matrix, use = "complete.obs", method = "pearson")
-            } else {
-              methods$shrinkage <- methods$pearson
-            }
-          } else {
-            # Now safe to compute shrinkage correlation
-            shrink_result <- cor.shrink(data_complete, verbose = FALSE)
-            methods$shrinkage <- shrink_result
-          }
-        }
+        shrink_result <- cor.shrink(data_matrix, verbose = FALSE)
+        methods$shrinkage <- shrink_result
       } else {
         warning("corpcor package not available, using Pearson as shrinkage substitute")
         if(is.null(methods$pearson)) {
@@ -278,7 +248,7 @@ compute_correlation_methods <- function(data_matrix, selected_methods = c("pears
         }
       }
     }, error = function(e) {
-      warning(sprintf("Shrinkage correlation failed (%s), using Pearson substitute", e$message))
+      warning("Shrinkage correlation failed, using Pearson substitute")
       if(is.null(methods$pearson)) {
         methods$shrinkage <- cor(data_matrix, use = "complete.obs", method = "pearson")
       } else {
