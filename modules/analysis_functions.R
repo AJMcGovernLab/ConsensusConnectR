@@ -233,6 +233,7 @@ compute_correlation_methods <- function(data_matrix, selected_methods = c("pears
 
   # 4. Shrinkage correlation (optimal for small samples)
   # Note: Data should already be imputed by MICE, so NAs should not be present
+  # If shrinkage fails, we skip it rather than duplicating Pearson
   if("shrinkage" %in% selected_methods) {
     tryCatch({
       if(requireNamespace("corpcor", quietly = TRUE)) {
@@ -240,20 +241,13 @@ compute_correlation_methods <- function(data_matrix, selected_methods = c("pears
         shrink_result <- cor.shrink(data_matrix, verbose = FALSE)
         methods$shrinkage <- shrink_result
       } else {
-        warning("corpcor package not available, using Pearson as shrinkage substitute")
-        if(is.null(methods$pearson)) {
-          methods$shrinkage <- cor(data_matrix, use = "complete.obs", method = "pearson")
-        } else {
-          methods$shrinkage <- methods$pearson
-        }
+        warning("Shrinkage skipped: corpcor package not available")
+        # Don't add shrinkage - just skip it
       }
     }, error = function(e) {
-      warning("Shrinkage correlation failed, using Pearson substitute")
-      if(is.null(methods$pearson)) {
-        methods$shrinkage <- cor(data_matrix, use = "complete.obs", method = "pearson")
-      } else {
-        methods$shrinkage <- methods$pearson
-      }
+      # Log the actual error for debugging
+      warning(paste0("Shrinkage skipped: ", conditionMessage(e)))
+      # Don't add shrinkage to methods - consensus will use remaining methods
     })
   }
 
