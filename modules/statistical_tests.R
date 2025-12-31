@@ -22,14 +22,14 @@ suppressPackageStartupMessages({
 #' @param n_tests Number of statistical tests to be performed
 #' @param alpha Significance threshold (default: 0.05)
 #' @param safety_factor Multiplier for conservative estimation (default: 2)
-#' @param min_perms Minimum number of permutations (default: 500)
+#' @param min_perms Minimum number of permutations (default: 1000)
 #' @param max_perms Maximum number of permutations for computational limits (default: NULL, no limit)
 #' @return Named list with n_permutations, min_detectable_p, and explanation
 #' @export
 calculate_required_permutations <- function(n_tests,
                                              alpha = 0.05,
                                              safety_factor = 2,
-                                             min_perms = 500,
+                                             min_perms = 1000,
                                              max_perms = NULL) {
   # Calculate required permutations
   n_required <- ceiling((n_tests / alpha) * safety_factor)

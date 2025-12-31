@@ -882,7 +882,7 @@ create_summary_ui <- function() {
                    <li><strong>Artificial Brain Area Discovery:</strong> Exhaustive testing of all region combinations (exploratory, stringent FDR correction)</li>
                  </ul>
                  <p><strong>Auto-calculated Permutations:</strong> Number of permutations is automatically computed based on the number of tests
-                 and FDR requirements using: n = ceiling((n_tests / alpha) × safety_factor), with minimum 500 permutations.</p>
+                 and FDR requirements using: n = ceiling((n_tests / alpha) × safety_factor), with minimum 1000 permutations.</p>
                  <p><strong>Interpretation:</strong> Significant positive contributions indicate regions whose connectivity
                  patterns differ most between groups (drivers of dissimilarity). Significant negative contributions indicate
                  regions that are more similar between groups than expected by chance.</p>"),
@@ -1231,7 +1231,7 @@ create_summary_ui <- function() {
               <ul>
                 <li>Node labels are shuffled on pre-computed network matrices (not raw data)</li>
                 <li>FDR correction (Benjamini-Hochberg) applied across all tests</li>
-                <li>Number of permutations auto-calculated: n = ceiling((n_tests / α) × 2) with minimum 500</li>
+                <li>Number of permutations auto-calculated: n = ceiling((n_tests / α) × 2) with minimum 1000</li>
               </ul>
 
               <h5>⚠️ Interpretation Guidelines:</h5>
@@ -9264,11 +9264,10 @@ server <- function(input, output, session) {
       n_tests_total
     }
 
-    # Use less stringent requirement for FDR (it's adaptive, not fixed like Bonferroni)
-    # FDR typically needs ~10x fewer permutations than Bonferroni for same power
-    safety <- if (correction == "fdr") 1.5 else 2
-
-    calculate_required_permutations(n_tests_for_perms, alpha = 0.05, safety_factor = safety, min_perms = 500)
+    # Use consistent safety factor for all correction methods
+    # More permutations = better statistical power regardless of correction method
+    # The correction method affects interpretation, not the quality of the null distribution
+    calculate_required_permutations(n_tests_for_perms, alpha = 0.05, safety_factor = 2, min_perms = 1000)
   })
 
   # Reactive: Estimate number of candidates for artificial mode
