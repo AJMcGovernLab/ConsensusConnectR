@@ -20,16 +20,16 @@ perform_mice_imputation <- function(data, m = 5, maxit = 10) {
   if(!has_mice) {
     return(list(imputed_data = data, imputation_needed = FALSE, method = "No MICE available"))
   }
-  
+
   missing_count <- sum(is.na(data))
   if(missing_count == 0) {
     return(list(imputed_data = data, imputation_needed = FALSE, missing_count = 0))
   }
-  
+
   tryCatch({
     mice_result <- mice(data, m = m, maxit = maxit, printFlag = FALSE, seed = 123)
     imputed_data <- complete(mice_result, 1)
-    
+
     return(list(
       imputed_data = imputed_data,
       imputation_needed = TRUE,
@@ -234,7 +234,6 @@ compute_correlation_methods <- function(data_matrix, selected_methods = c("pears
   }
 
   # 4. Shrinkage correlation (optimal for small samples)
-  # Data is already imputed by MICE, so no NAs expected
   # If shrinkage fails, skip it entirely to maintain consistent consensus calculation
   if("shrinkage" %in% selected_methods) {
     tryCatch({
@@ -243,29 +242,45 @@ compute_correlation_methods <- function(data_matrix, selected_methods = c("pears
       } else {
         library(corpcor)
 
-        # Check for zero/near-zero variance columns (causes cor.shrink to fail)
-        # Use small tolerance to catch numerical precision issues
-        col_vars <- apply(data_matrix, 2, var, na.rm = TRUE)
-        var_tolerance <- .Machine$double.eps * 100  # Small tolerance for numerical stability
-        zero_var_cols <- which(col_vars < var_tolerance | is.na(col_vars))
+        # Check 1: Problematic values (NA, NaN, Inf)
+        na_count <- sum(is.na(data_matrix))
+        nan_count <- sum(is.nan(as.matrix(data_matrix)))
+        inf_count <- sum(is.infinite(as.matrix(data_matrix)))
 
-        if(length(zero_var_cols) > 0) {
-          zero_var_names <- colnames(data_matrix)[zero_var_cols]
-          zero_var_values <- round(col_vars[zero_var_cols], 10)
-          warning(sprintf("%sShrinkage skipped: %d zero/near-zero variance columns detected (%s; var=%s)",
-                         group_prefix, length(zero_var_cols),
-                         paste(zero_var_names, collapse = ", "),
-                         paste(zero_var_values, collapse = ", ")))
-        } else if(nrow(data_matrix) < 3) {
-          warning(sprintf("%sShrinkage skipped: insufficient samples (%d < 3)", group_prefix, nrow(data_matrix)))
+        if(na_count > 0 || nan_count > 0 || inf_count > 0) {
+          problems <- c()
+          if(na_count > 0) problems <- c(problems, sprintf("%d NA", na_count))
+          if(nan_count > 0) problems <- c(problems, sprintf("%d NaN", nan_count))
+          if(inf_count > 0) problems <- c(problems, sprintf("%d Inf", inf_count))
+          warning(sprintf("%sShrinkage skipped: problematic values (%s)",
+                         group_prefix, paste(problems, collapse = ", ")))
         } else {
-          # All checks passed - compute shrinkage
-          shrink_result <- cor.shrink(data_matrix, verbose = FALSE)
-          methods$shrinkage <- shrink_result
+          # Check 2: Zero/near-zero variance columns
+          col_vars <- apply(data_matrix, 2, var, na.rm = TRUE)
+          var_tolerance <- .Machine$double.eps * 100
+          zero_var_cols <- which(col_vars < var_tolerance | is.na(col_vars))
+
+          if(length(zero_var_cols) > 0) {
+            zero_var_names <- colnames(data_matrix)[zero_var_cols]
+            zero_var_values <- round(col_vars[zero_var_cols], 10)
+            warning(sprintf("%sShrinkage skipped: %d zero/near-zero variance columns (%s; var=%s)",
+                           group_prefix, length(zero_var_cols),
+                           paste(zero_var_names, collapse = ", "),
+                           paste(zero_var_values, collapse = ", ")))
+          } else if(nrow(data_matrix) < 3) {
+            warning(sprintf("%sShrinkage skipped: insufficient samples (%d < 3)", group_prefix, nrow(data_matrix)))
+          } else {
+            # All checks passed - compute shrinkage
+            shrink_result <- cor.shrink(data_matrix, verbose = FALSE)
+            methods$shrinkage <- shrink_result
+          }
         }
       }
     }, error = function(e) {
-      warning(paste0(group_prefix, "Shrinkage skipped: ", conditionMessage(e)))
+      # Add diagnostic info to help debug cor.shrink failures
+      err_msg <- conditionMessage(e)
+      diag_info <- sprintf("n=%d, p=%d", nrow(data_matrix), ncol(data_matrix))
+      warning(sprintf("%sShrinkage skipped (%s): %s", group_prefix, diag_info, err_msg))
     })
   }
 
