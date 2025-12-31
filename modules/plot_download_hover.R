@@ -375,11 +375,11 @@ plot_download_modal_ui <- function() {
       # Body - Form inputs
       div(
         class = "plot-download-modal-body",
-        # Plot Preview
+        # Plot Preview - height is dynamic based on aspect ratio
         div(
           class = "plot-preview-container",
           div(class = "plot-preview-label", "Preview"),
-          plotOutput("hover_download_preview", height = "150px")
+          plotOutput("hover_download_preview", height = "auto")
         ),
         # DPI Selection
         div(
@@ -1852,7 +1852,7 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
   })
 
   # Render plot preview in modal
-  # Shows actual plot with dimensions displayed
+  # Shows scaled plot that maintains aspect ratio from user's dimension inputs
   output$hover_download_preview <- renderPlot({
     plot_id <- current_plot_id()
     registry <- plot_registry()
@@ -1860,10 +1860,6 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     # Get dimensions from inputs - these trigger reactivity
     width_in <- as.numeric(input$hover_download_width %||% 10)
     height_in <- as.numeric(input$hover_download_height %||% 8)
-
-    # Debug logging
-    message(sprintf("[Plot Download Preview] Rendering preview for plot_id: %s (dims: %.1f x %.1f)",
-                    if(is.null(plot_id)) "NULL" else plot_id, width_in, height_in))
 
     # Show placeholder if no plot selected
     if(is.null(plot_id)) {
@@ -1876,8 +1872,6 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
 
     # Check if plot exists in registry
     if(!plot_id %in% names(registry)) {
-      message(sprintf("[Plot Download Preview] Plot '%s' not found in registry. Available: %s",
-                      plot_id, paste(head(names(registry), 10), collapse = ", ")))
       par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
       text(0.5, 0.5, "Plot not in registry", col = "#dc3545", cex = 1.0)
@@ -1887,55 +1881,47 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     plot_info <- registry[[plot_id]]
 
     # Check if data is available
-    condition_met <- tryCatch(
-      plot_info$condition(),
-      error = function(e) {
-        message(sprintf("[Plot Download Preview] Condition check error for '%s': %s", plot_id, conditionMessage(e)))
-        FALSE
-      }
-    )
+    condition_met <- tryCatch(plot_info$condition(), error = function(e) FALSE)
 
     if(!condition_met) {
-      message(sprintf("[Plot Download Preview] Condition not met for '%s'", plot_id))
       par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
       text(0.5, 0.5, "Run analysis first", col = "#ffc107", cex = 1.0)
       return()
     }
 
-    # Try to render actual plot with dimensions shown in title
-    message(sprintf("[Plot Download Preview] Attempting to render '%s'", plot_id))
-    render_error <- NULL
+    # Render the plot with appropriate margins for preview
     tryCatch({
       # Use outer margin to show dimensions at the top
-      par(oma = c(0, 0, 1.5, 0), mar = c(2, 2, 1, 1), cex = 0.5, bg = "white")
+      par(oma = c(0, 0, 1.2, 0), mar = c(3, 3, 2, 1), cex = 0.6, bg = "white")
 
-      # Call render within a tryCatch to capture any errors
+      # Call render
       plot_info$render()
-      message(sprintf("[Plot Download Preview] Successfully rendered '%s'", plot_id))
 
-      # Add dimensions in outer margin (only if we got here without error)
+      # Add dimensions in outer margin
       mtext(sprintf("Output: %.1f\" x %.1f\"", width_in, height_in),
-            outer = TRUE, line = 0.3, cex = 0.7, font = 2, col = "#3498db")
+            outer = TRUE, line = 0.1, cex = 0.8, font = 2, col = "#3498db")
     }, error = function(e) {
-      render_error <<- conditionMessage(e)
-
-      # Log error to console for debugging
-      message(sprintf("[Plot Download Preview] Error rendering '%s': %s", plot_id, render_error))
-
-      # If rendering fails, show error with dimensions
+      # If rendering fails, show error
       par(mar = c(0, 0, 0, 0), bg = "#fff3cd")
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
            xlim = c(0, 1), ylim = c(0, 1))
-      text(0.5, 0.7, "Preview error", col = "#856404", cex = 0.8)
-      # Show truncated error message
-      err_msg <- substr(render_error, 1, 50)
-      text(0.5, 0.5, err_msg, col = "#6c757d", cex = 0.6)
-      text(0.5, 0.3, sprintf("Output: %.1f\" x %.1f\"", width_in, height_in),
-           col = "#333", cex = 0.7, font = 2)
+      text(0.5, 0.6, "Preview error", col = "#856404", cex = 0.9)
+      text(0.5, 0.4, sprintf("%.1f\" x %.1f\"", width_in, height_in),
+           col = "#333", cex = 0.8, font = 2)
     })
 
-  }, height = 150, bg = "transparent")
+  }, height = function() {
+    # Calculate height based on aspect ratio
+    # Base width is ~400px (modal content area), scale height proportionally
+    width_in <- as.numeric(input$hover_download_width %||% 10)
+    height_in <- as.numeric(input$hover_download_height %||% 8)
+    base_width <- 400
+    aspect_ratio <- height_in / width_in
+    # Calculate height, with min 100 and max 300 to keep preview reasonable
+    preview_height <- round(base_width * aspect_ratio)
+    max(100, min(300, preview_height))
+  }, bg = "white")
 
   # Download handler
   output$execute_hover_download <- downloadHandler(
