@@ -71,11 +71,13 @@ hover_download_css <- function() {
 
     .plot-download-modal-content {
       background-color: white;
-      margin: 8% auto;
+      margin: 4% auto;
       padding: 0;
       border-radius: 12px;
-      width: 420px;
+      width: 500px;
       max-width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
       box-shadow: 0 15px 50px rgba(0,0,0,0.3);
       animation: plotModalSlideIn 0.3s ease;
     }
@@ -214,6 +216,51 @@ hover_download_css <- function() {
     .plot-download-modal-body input[type='number'] {
       border-radius: 6px;
     }
+
+    /* =========================================
+       PLOT PREVIEW STYLES
+       ========================================= */
+    .plot-preview-container {
+      background: #f8f9fa;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      padding: 8px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    .plot-preview-container .plot-preview-label {
+      font-size: 0.8em;
+      color: #6c757d;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+
+    .plot-preview-container .shiny-plot-output {
+      background: white;
+      border-radius: 6px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    /* Loading state for preview */
+    .plot-preview-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 150px;
+      color: #6c757d;
+    }
+
+    .plot-preview-loading::after {
+      content: 'Loading preview...';
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; }
+    }
   "))
 }
 
@@ -328,6 +375,12 @@ plot_download_modal_ui <- function() {
       # Body - Form inputs
       div(
         class = "plot-download-modal-body",
+        # Plot Preview
+        div(
+          class = "plot-preview-container",
+          div(class = "plot-preview-label", "Preview"),
+          plotOutput("hover_download_preview", height = "180px")
+        ),
         # DPI Selection
         div(
           class = "download-form-group",
@@ -1015,39 +1068,39 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
     ),
 
     # =========================================================================
-    # REGIONAL ANALYSIS PLOTS
+    # REGIONAL CONTRIBUTION ANALYSIS PLOTS
+    # Note: These plots require running "Regional Contribution Analysis" first
+    # They depend on regional_contribution_results() reactive which is session-specific
     # =========================================================================
     "regionalContributionBarPlot" = list(
-      condition = function() !is.null(analysis_results$comprehensive_consensus) && !is.null(ui_state$brain_areas),
+      condition = function() !is.null(analysis_results$regional_contribution),
       render = function() {
-        render_regional_contribution_bar(
-          analysis_results$comprehensive_consensus,
-          ui_state$brain_areas,
-          ui_state$area_colors,
-          get_group_colors()
-        )
+        # This plot requires regional_contribution_results() from the app
+        # Show placeholder since the data is session-specific
+        par(mar = c(1, 1, 2, 1))
+        plot(1, type = "n", axes = FALSE, xlab = "", ylab = "",
+             main = "Regional Contribution Analysis", cex.main = 1.2)
+        text(1, 1, "Run 'Regional Contribution Analysis' in the app\nto generate this plot", cex = 1.1, col = "#666")
       }
     ),
 
     "regionalContributionCircularPlot" = list(
-      condition = function() !is.null(analysis_results$comprehensive_consensus) && !is.null(ui_state$brain_areas),
+      condition = function() !is.null(analysis_results$regional_contribution),
       render = function() {
-        render_regional_contribution_circular(
-          analysis_results$comprehensive_consensus,
-          ui_state$brain_areas,
-          ui_state$area_colors
-        )
+        par(mar = c(1, 1, 2, 1))
+        plot(1, type = "n", axes = FALSE, xlab = "", ylab = "",
+             main = "Regional Contribution Network", cex.main = 1.2)
+        text(1, 1, "Run 'Regional Contribution Analysis' in the app\nto generate this plot", cex = 1.1, col = "#666")
       }
     ),
 
     "regionalJaccardPlot" = list(
-      condition = function() !is.null(analysis_results$comprehensive_consensus) && !is.null(ui_state$brain_areas),
+      condition = function() !is.null(analysis_results$regional_contribution),
       render = function() {
-        render_regional_jaccard(
-          analysis_results$comprehensive_consensus,
-          ui_state$brain_areas,
-          ui_state$area_colors
-        )
+        par(mar = c(1, 1, 2, 1))
+        plot(1, type = "n", axes = FALSE, xlab = "", ylab = "",
+             main = "Regional Jaccard Similarity", cex.main = 1.2)
+        text(1, 1, "Run 'Regional Contribution Analysis' in the app\nto generate this plot", cex = 1.1, col = "#666")
       }
     ),
 
@@ -1686,6 +1739,53 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     current_plot_id(input$hover_download_plot_id)
   })
 
+  # Render plot preview in modal
+  output$hover_download_preview <- renderPlot({
+    plot_id <- current_plot_id()
+    registry <- plot_registry()
+
+    # Show placeholder if no plot selected
+    if(is.null(plot_id)) {
+      par(mar = c(0, 0, 0, 0))
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
+      text(1, 1, "Select a plot to preview", col = "#6c757d", cex = 1.2)
+      return()
+    }
+
+    # Check if plot exists in registry
+    if(!plot_id %in% names(registry)) {
+      par(mar = c(0, 0, 0, 0))
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
+      text(1, 1, "Plot not available", col = "#dc3545", cex = 1.2)
+      return()
+    }
+
+    plot_info <- registry[[plot_id]]
+
+    # Check if data is available
+    if(!plot_info$condition()) {
+      par(mar = c(0, 0, 0, 0))
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
+      text(1, 1, "Run analysis first", col = "#ffc107", cex = 1.2)
+      return()
+    }
+
+    # Render the actual plot preview
+    tryCatch({
+      plot_info$render()
+    }, error = function(e) {
+      par(mar = c(0, 0, 0, 0))
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
+      # Show more helpful error message
+      err_msg <- conditionMessage(e)
+      if(grepl("could not find function", err_msg)) {
+        text(1, 1, "Download not available\nfor this plot type", col = "#6c757d", cex = 1.0)
+      } else {
+        text(1, 1, paste("Preview error:\n", substr(err_msg, 1, 50)), col = "#dc3545", cex = 0.9)
+      }
+    })
+  }, height = 180)
+
   # Download handler
   output$execute_hover_download <- downloadHandler(
     filename = function() {
@@ -1756,17 +1856,28 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
         # Make sure device is closed
         tryCatch(dev.off(), error = function(e2) {})
 
+        err_msg <- conditionMessage(e)
+
         # Create error placeholder
         if(format == "png") {
           png(file, width = 400, height = 300)
         } else {
           pdf(file, width = 5, height = 4)
         }
-        plot(1, type = "n", main = "Error rendering plot", axes = FALSE, xlab = "", ylab = "")
-        text(1, 1, conditionMessage(e), cex = 0.8)
-        dev.off()
 
-        session$sendCustomMessage("plot_download_error", list(error = conditionMessage(e)))
+        # Check if this is a missing function error
+        if(grepl("could not find function", err_msg)) {
+          plot(1, type = "n", main = "Download Not Available", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "This plot type does not support\nindividual download yet.", cex = 1.0)
+          dev.off()
+          session$sendCustomMessage("plot_download_error",
+            list(error = "This plot type does not support individual download. Use the main export feature instead."))
+        } else {
+          plot(1, type = "n", main = "Error rendering plot", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, err_msg, cex = 0.8)
+          dev.off()
+          session$sendCustomMessage("plot_download_error", list(error = err_msg))
+        }
       })
     }
   )
