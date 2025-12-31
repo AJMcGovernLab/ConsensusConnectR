@@ -1845,7 +1845,7 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
   })
 
   # Render plot preview in modal
-  # Shows aspect ratio box that updates when dimensions change
+  # Shows actual plot with dimensions displayed
   output$hover_download_preview <- renderPlot({
     plot_id <- current_plot_id()
     registry <- plot_registry()
@@ -1853,9 +1853,6 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     # Get dimensions from inputs - these trigger reactivity
     width_in <- as.numeric(input$hover_download_width %||% 10)
     height_in <- as.numeric(input$hover_download_height %||% 8)
-
-    # Calculate aspect ratio for the box
-    aspect <- width_in / height_in
 
     # Show placeholder if no plot selected
     if(is.null(plot_id)) {
@@ -1884,35 +1881,23 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
       return()
     }
 
-    # Show aspect ratio preview box that reacts to dimension changes
-    par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
-    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
-         xlim = c(0, 1), ylim = c(0, 1))
-
-    # Calculate aspect ratio box dimensions
-    if(aspect >= 1) {
-      box_width <- 0.85
-      box_height <- 0.85 / aspect
-    } else {
-      box_height <- 0.7
-      box_width <- 0.7 * aspect
-    }
-    box_x <- (1 - box_width) / 2
-    box_y <- (1 - box_height) / 2 - 0.05
-
-    # Draw the aspect ratio box
-    rect(box_x, box_y, box_x + box_width, box_y + box_height,
-         col = "white", border = "#3498db", lwd = 2)
-
-    # Show dimensions at top
-    text(0.5, 0.95, sprintf("%.1f\" x %.1f\"", width_in, height_in),
-         col = "#333", cex = 0.9, font = 2)
-
-    # Format and show plot name in center
-    display_name <- gsub("([A-Z])", " \\1", plot_id)
-    display_name <- gsub("Plot$", "", display_name)
-    display_name <- trimws(display_name)
-    text(0.5, box_y + box_height/2, display_name, col = "#666", cex = 0.7)
+    # Try to render actual plot with dimensions shown in title
+    tryCatch({
+      # Use outer margin to show dimensions at the top
+      par(oma = c(0, 0, 1.5, 0), mar = c(2, 2, 1, 1), cex = 0.5, bg = "white")
+      plot_info$render()
+      # Add dimensions in outer margin
+      mtext(sprintf("Output: %.1f\" x %.1f\"", width_in, height_in),
+            outer = TRUE, line = 0.3, cex = 0.7, font = 2, col = "#3498db")
+    }, error = function(e) {
+      # If rendering fails, show error with dimensions
+      par(mar = c(0, 0, 0, 0), bg = "#fff3cd")
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
+           xlim = c(0, 1), ylim = c(0, 1))
+      text(0.5, 0.6, "Preview unavailable", col = "#856404", cex = 0.9)
+      text(0.5, 0.4, sprintf("Output: %.1f\" x %.1f\"", width_in, height_in),
+           col = "#333", cex = 0.8, font = 2)
+    })
 
   }, height = 150, bg = "transparent")
 
