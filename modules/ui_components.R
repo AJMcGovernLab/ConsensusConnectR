@@ -8,6 +8,10 @@ library(DT)
 # Dashboard CSS styling
 dashboard_css <- function() {
   tags$head(
+    # Include hover download CSS and JS (from plot_download_hover.R)
+    hover_download_css(),
+    hover_download_js(),
+
     tags$style(
       HTML("
         /* Basic styling */

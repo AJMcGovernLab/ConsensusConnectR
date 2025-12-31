@@ -177,6 +177,9 @@ source("modules/download_simple.R")
 source("modules/consensus_analytics.R")
 source("modules/consensus_visualizations.R")
 
+# Source hover download module (adds download button to all plots)
+source("modules/plot_download_hover.R")
+
 # Source statistical testing module (permutation tests, regional contribution)
 source("modules/statistical_tests.R")
 
@@ -706,14 +709,14 @@ create_summary_ui <- function() {
                  <p><strong>N combinations:</strong> = (# correlation methods) × 3 approaches. If a combination has missing data, it is excluded.</p>"),
 
             h6("Normalized Consensus Scores (0-1)"),
-            plotOutput("consensusNodeMetricsAcrossMethodsPlot", height = "800px"),
+            downloadablePlotOutput("consensusNodeMetricsAcrossMethodsPlot", height = "800px"),
             tags$p(tags$em("Figure: Scatter plot of normalized consensus scores (0 = least important, 1 = most important). Points on diagonal have equal importance by both metrics. Upper right quadrant contains most important nodes."),
                    style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
 
             hr(),
 
             h6("Average Ranks Across Methods"),
-            plotOutput("consensusNodeRanksPlot", height = "800px"),
+            downloadablePlotOutput("consensusNodeRanksPlot", height = "800px"),
             tags$p(tags$em("Figure: Scatter plot of average ranks across all method-approach combinations. Lower values = more important nodes."),
                    style = "font-size: 0.9em; color: #666; margin-top: 10px;")
           ),
@@ -746,7 +749,7 @@ create_summary_ui <- function() {
               )
             ),
 
-            plotOutput("consensusNetworkPlot", height = "800px"),
+            downloadablePlotOutput("consensusNetworkPlot", height = "800px"),
             tags$p(tags$em("Figure: Percolation networks with node sizes proportional to consensus eigenvector centrality across all methods and approaches. Edge structure from percolation analysis at optimal threshold."),
                    style = "font-size: 0.9em; color: #666; margin-top: 10px;")
           ),
@@ -758,14 +761,14 @@ create_summary_ui <- function() {
                  (Percolation, Weighted, Persistence AUC). Aggregate by brain region and group.</p>"),
 
             h6("Regional Aggregates"),
-            plotOutput("consensusRegionalPlot", height = "600px"),
+            downloadablePlotOutput("consensusRegionalPlot", height = "600px"),
             tags$p(tags$em("Figure: Grouped bar plots showing mean consensus eigenvector score (0-1) by brain region and experimental group. Error bars show standard deviation across nodes within each region."),
                    style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
 
             hr(),
 
             h6("Subregion (Node-Level) Consensus Scores"),
-            plotOutput("consensusSubregionalPlot", height = "1200px"),
+            downloadablePlotOutput("consensusSubregionalPlot", height = "1200px"),
             tags$p(tags$em("Figure: Bar plots showing rank-based consensus eigenvector scores (0-1) for individual subregions within each brain area, grouped by experimental condition."),
                    style = "font-size: 0.9em; color: #666; margin-top: 10px;")
           ),
@@ -785,7 +788,7 @@ create_summary_ui <- function() {
                  regardless of correlation method or analytical approach used.</p>"),
 
             h5("📊 Averaged Across All Methods"),
-            plotOutput("networkSimilarityHeatmapPlot", height = "500px"),
+            downloadablePlotOutput("networkSimilarityHeatmapPlot", height = "500px"),
             tags$p(tags$em("Figure: Heatmap showing pairwise group similarity averaged across all available method-approach combinations."),
                    style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
 
@@ -796,17 +799,17 @@ create_summary_ui <- function() {
             fluidRow(
               column(4,
                 h6("Weighted Approach", style = "text-align: center; font-weight: bold;"),
-                plotOutput("networkSimilarityWeightedPlot", height = "350px"),
+                downloadablePlotOutput("networkSimilarityWeightedPlot", height = "350px"),
                 tags$p(tags$em("Full correlation matrices"), style = "font-size: 0.8em; color: #666; text-align: center;")
               ),
               column(4,
                 h6("Percolation Approach", style = "text-align: center; font-weight: bold;"),
-                plotOutput("networkSimilarityPercolationPlot", height = "350px"),
+                downloadablePlotOutput("networkSimilarityPercolationPlot", height = "350px"),
                 tags$p(tags$em("Optimal threshold networks"), style = "font-size: 0.8em; color: #666; text-align: center;")
               ),
               column(4,
                 h6("Persistence Approach", style = "text-align: center; font-weight: bold;"),
-                plotOutput("networkSimilarityPersistencePlot", height = "350px"),
+                downloadablePlotOutput("networkSimilarityPersistencePlot", height = "350px"),
                 tags$p(tags$em("Multi-threshold averaged"), style = "font-size: 0.8em; color: #666; text-align: center;")
               )
             )
@@ -1046,7 +1049,7 @@ create_summary_ui <- function() {
             hr(),
 
             h6("Part 1: Leave-One-Out Contribution Scores"),
-            plotOutput("regionalContributionBarPlot", height = "600px"),
+            downloadablePlotOutput("regionalContributionBarPlot", height = "600px"),
             tags$p(tags$em("Figure: Horizontal bar plot showing contribution scores for each region (averaged across all method-approach combinations).
                    Bars extending right (positive) indicate regions that drive dissimilarity - removing them increases group similarity.
                    Error bars show 95% CI from permutation null distribution. Stars indicate significance (* p<0.05, ** p<0.01, *** p<0.001)
@@ -1056,7 +1059,7 @@ create_summary_ui <- function() {
             hr(),
 
             h6("Part 2: Network Visualization with Significance"),
-            plotOutput("regionalContributionCircularPlot", height = "700px"),
+            downloadablePlotOutput("regionalContributionCircularPlot", height = "700px"),
             tags$p(tags$em("Figure: Circular network layout with nodes colored by contribution significance.
                    Red = significant positive contribution (drives dissimilarity), Green = significant negative
                    contribution (drives similarity), Gray = not significant. Node size reflects absolute contribution magnitude."),
@@ -1065,7 +1068,7 @@ create_summary_ui <- function() {
             hr(),
 
             h6("Part 3: Regional Jaccard Similarity"),
-            plotOutput("regionalJaccardPlot", height = "500px"),
+            downloadablePlotOutput("regionalJaccardPlot", height = "500px"),
             tags$p(tags$em("Figure: Jaccard similarity computed only for edges involving each region.
                    Shows how similar each region's connectivity pattern is between the two groups.
                    Lower values indicate greater regional dissimilarity."),
@@ -1249,7 +1252,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Convergence and quality of multiple imputation using MICE (Multiple Imputation by Chained Equations)</p>
                        <p><strong>Mathematical basis:</strong> Iterative conditional modeling where Y<sub>j</sub><sup>(t+1)</sup> ~ P(Y<sub>j</sub> | Y<sub>obs</sub>, Y<sub>(-j)</sub><sup>(t)</sup>, θ<sub>j</sub><sup>(t)</sup>). 
                        Trace plots show convergence of imputed values across iterations, and density plots compare distributions of observed vs imputed values to detect bias.</p>"),
-                  plotOutput("imputationPlots", height = "600px"),
+                  downloadablePlotOutput("imputationPlots", height = "600px"),
                   tags$p(tags$em("Figure: Trace plots (convergence) and density plots (distribution comparison) for MICE imputation assessment."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1349,7 +1352,7 @@ create_results_ui <- function() {
               tabsetPanel(
                 tabPanel("Correlation Matrices",
                   h5("Correlation Matrices by Method"),
-                  plotOutput("method_correlation_heatmap", height = "700px"),
+                  downloadablePlotOutput("method_correlation_heatmap", height = "700px"),
                   br(),
                   verbatimTextOutput("method_info_text")
                 ),
@@ -1378,7 +1381,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Final consensus correlation matrices for each group using median aggregation across 5 methods</p>
                        <p><strong>Mathematical basis:</strong> For each node pair (i,j): r<sub>consensus</sub>(i,j) = median{r<sub>Pearson</sub>, r<sub>Spearman</sub>, r<sub>Biweight</sub>, r<sub>Shrinkage</sub>, r<sub>Partial</sub>}. 
                        Colors represent correlation strength: red (positive), blue (negative), intensity indicates magnitude.</p>"),
-                  plotOutput("correlationPlots", height = "600px"),
+                  downloadablePlotOutput("correlationPlots", height = "600px"),
                   tags$p(tags$em("Figure: Correlation heatmaps showing median consensus values across 5 methods (red=positive, blue=negative)."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1387,7 +1390,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Distribution of all pairwise correlations within each experimental group</p>
                        <p><strong>Mathematical basis:</strong> Histograms show frequency of correlation values from upper triangular matrix (N(N-1)/2 unique pairs). 
                        Helps identify correlation strength patterns and potential group differences in overall connectivity.</p>"),
-                  plotOutput("correlationDistributionPlot", height = "600px"),
+                  downloadablePlotOutput("correlationDistributionPlot", height = "600px"),
                   tags$p(tags$em("Figure: Histograms showing frequency distribution of correlation values within each experimental group."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1523,7 +1526,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Giant connected component size S(τ) as function of correlation threshold τ</p>
                        <p><strong>Mathematical basis:</strong> S(τ) = max{|C<sub>i</sub>(τ)|}/N where |C<sub>i</sub>(τ)| is size of component i at threshold τ. 
                        Critical threshold τ<sub>c</sub> = argmax(d²S/dτ²) identifies optimal network thresholding that preserves connectivity while removing weak edges.</p>"),
-                  plotOutput("groupPercolationPlot", height = "600px"),
+                  downloadablePlotOutput("groupPercolationPlot", height = "600px"),
                   tags$p(tags$em("Figure: Percolation curves showing giant connected component size S(τ) as function of correlation threshold τ for each group."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1547,7 +1550,7 @@ create_results_ui <- function() {
                       HTML("<p><strong>What it measures:</strong> Thresholded binary networks showing surviving connections after percolation analysis</p>
                            <p><strong>Mathematical basis:</strong> Binary adjacency matrix A<sub>ij</sub> = 1 if |r<sub>ij</sub>| ≥ τ<sub>c</sub>, else 0. 
                            Node size ∝ eigenvector centrality, edge thickness ∝ correlation strength. Layout algorithms optimize spatial embedding for network visualization.</p>"),
-                      plotOutput("networkPlots", height = "600px"),
+                      downloadablePlotOutput("networkPlots", height = "600px"),
                       tags$p(tags$em("Figure: Thresholded binary networks showing surviving connections after percolation analysis (node size ∝ eigenvector centrality)."), 
                              style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                     )
@@ -1558,7 +1561,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Complete network gallery across all experimental groups with consistent layout</p>
                        <p><strong>Mathematical basis:</strong> Same binary networks as above but displayed in grid format for comparison. 
                        Enables visual identification of group-specific connectivity patterns, hub locations, and overall network architecture differences.</p>"),
-                  plotOutput("networkGalleryPlot", height = "800px"),
+                  downloadablePlotOutput("networkGalleryPlot", height = "800px"),
                   tags$p(tags$em("Figure: Complete network gallery across all experimental groups with consistent layout for visual comparison of connectivity patterns."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1569,7 +1572,7 @@ create_results_ui <- function() {
                        <p><strong>Mathematical basis:</strong> Multiple centrality measures including degree centrality (k<sub>i</sub> = Σ<sub>j</sub>A<sub>ij</sub>), 
                        betweenness centrality (fraction of shortest paths through node i), and eigenvector centrality (dominant eigenvector of adjacency matrix). 
                        Global measures include network density, clustering coefficient, and efficiency metrics.</p>"),
-                  plotOutput("networkDashboardPlot", height = "600px"),
+                  downloadablePlotOutput("networkDashboardPlot", height = "600px"),
                   tags$p(tags$em("Figure: Comprehensive dashboard of network topology metrics including degree, betweenness, and eigenvector centrality across groups."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1578,7 +1581,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Relationship between node strength (degree) and eigenvector centrality in thresholded networks</p>
                        <p><strong>Mathematical basis:</strong> Node strength s<sub>i</sub> = Σ<sub>j</sub>A<sub>ij</sub> vs eigenvector centrality e<sub>i</sub> where Ae = λe. 
                        Scatter plots reveal whether high-degree nodes are also influential in network structure. Correlation quantifies hub consistency across centrality measures.</p>"),
-                  plotOutput("percolationStrengthEigenvectorPlot", height = "800px"),
+                  downloadablePlotOutput("percolationStrengthEigenvectorPlot", height = "800px"),
                   tags$p(tags$em("Figure: Scatter plots of node strength vs eigenvector centrality by group. Dashed line = linear regression fit; r = Pearson correlation; R² = coefficient of determination; points colored by brain region."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1591,7 +1594,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Distribution of centrality measures across brain regions for each experimental group</p>
                        <p><strong>Mathematical basis:</strong> Groups nodes by anatomical regions, computes centrality statistics within regions. 
                        Box plots show median, quartiles, and outliers of degree/eigenvector centrality within each brain area.</p>"),
-                  plotOutput("nodeCentralityPlot", height = "600px"),
+                  downloadablePlotOutput("nodeCentralityPlot", height = "600px"),
                   tags$p(tags$em("Figure: Box plots showing distribution of centrality measures across brain regions for each experimental group."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1600,7 +1603,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Average connectivity strength between brain regions</p>
                        <p><strong>Mathematical basis:</strong> Inter-region connectivity R<sub>AB</sub> = mean{r<sub>ij</sub>} for all node pairs (i∈A, j∈B). 
                        Heatmap colors represent correlation strength between anatomical regions, revealing modular organization.</p>"),
-                  plotOutput("nodeHeatmapPlot", height = "500px"),
+                  downloadablePlotOutput("nodeHeatmapPlot", height = "500px"),
                   tags$p(tags$em("Figure: Heatmap showing average connectivity strength between brain regions with color intensity representing correlation magnitude."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1609,7 +1612,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Network-level connectivity patterns between anatomical brain regions</p>
                        <p><strong>Mathematical basis:</strong> Creates region-level networks where nodes = brain areas, edges = average correlations. 
                        Visualizes macroscale connectivity architecture and identifies dominant inter-regional communication pathways.</p>"),
-                  plotOutput("brainAreaConnectivityPlot", height = "600px"),
+                  downloadablePlotOutput("brainAreaConnectivityPlot", height = "600px"),
                   tags$p(tags$em("Figure: Region-level networks showing connectivity patterns between anatomical brain regions with edge thickness representing correlation strength."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1618,7 +1621,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Regional importance in network influence across experimental groups</p>
                        <p><strong>Mathematical basis:</strong> Mean eigenvector centrality within each brain region: ē<sub>region</sub> = (1/n) Σ<sub>i∈region</sub> e<sub>i</sub>. 
                        Identifies which brain areas contain the most influential nodes in network communication.</p>"),
-                  plotOutput("avgEigenvectorPlot", height = "600px"),
+                  downloadablePlotOutput("avgEigenvectorPlot", height = "600px"),
                   tags$p(tags$em("Figure: Grouped bar plots of average eigenvector centrality by brain region. Blue = weighted networks, orange = thresholded networks; error bars = standard error (SEM = SD/√n)."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1627,7 +1630,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Statistical comparison of regional eigenvector centrality across groups with error bars</p>
                        <p><strong>Mathematical basis:</strong> Mean ± SD of eigenvector centrality for each region-group combination. 
                        Error bars represent standard deviation, enabling statistical comparison of regional importance between experimental conditions.</p>"),
-                  plotOutput("combinedEigenvectorBarPlot", height = "800px"),
+                  downloadablePlotOutput("combinedEigenvectorBarPlot", height = "800px"),
                   tags$p(tags$em("Figure: Grouped bar plots of mean eigenvector centrality by brain region and experimental group; error bars = standard deviation (SD)."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1640,7 +1643,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Ranking of individual brain nodes by centrality measures across experimental groups</p>
                        <p><strong>Mathematical basis:</strong> Ranks nodes by degree centrality k<sub>i</sub> or eigenvector centrality e<sub>i</sub> within each group. 
                        Identifies specific brain regions that consistently act as hubs across different experimental conditions.</p>"),
-                  plotOutput("individualNodeCentralityPlot", height = "600px"),
+                  downloadablePlotOutput("individualNodeCentralityPlot", height = "600px"),
                   tags$p(tags$em("Figure: Rankings of individual brain nodes by centrality measures, identifying consistent hub nodes across experimental groups."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1649,7 +1652,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Centrality values for each individual node across all experimental groups</p>
                        <p><strong>Mathematical basis:</strong> Matrix where rows = individual nodes, columns = experimental groups, values = centrality measures. 
                        Color intensity represents centrality magnitude, revealing node-specific patterns and group differences in hub importance.</p>"),
-                  plotOutput("individualNodeHeatmapPlot", height = "600px"),
+                  downloadablePlotOutput("individualNodeHeatmapPlot", height = "600px"),
                   tags$p(tags$em("Figure: Heatmap matrix showing centrality values for individual nodes across experimental groups with color intensity representing importance."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1659,7 +1662,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Statistical properties of edge weights (correlation strengths) in thresholded networks</p>
                        <p><strong>Mathematical basis:</strong> Distribution analysis of edge weights w<sub>ij</sub> = |r<sub>ij</sub>| for surviving edges (above τ<sub>c</sub>). 
                        Box plots show median, quartiles, and outliers of edge strengths, revealing network-level differences in connectivity strength patterns.</p>"),
-                  plotOutput("edgeMetricsPlot", height = "600px"),
+                  downloadablePlotOutput("edgeMetricsPlot", height = "600px"),
                   tags$p(tags$em("Figure: Box plots showing distribution of edge weights (correlation strengths) in thresholded networks across experimental groups."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1672,7 +1675,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Pairwise similarity between group networks using Jaccard index for binary networks</p>
                        <p><strong>Mathematical basis:</strong> J(A,B) = |E<sub>A</sub> ∩ E<sub>B</sub>| / |E<sub>A</sub> ∪ E<sub>B</sub>| where E<sub>A</sub>, E<sub>B</sub> are edge sets. 
                        Values range [0,1]: 0 = no shared edges, 1 = identical networks. Heatmap reveals which groups have most similar network architectures.</p>"),
-                  plotOutput("networkSimilarityPlot", height = "600px"),
+                  downloadablePlotOutput("networkSimilarityPlot", height = "600px"),
                   tags$p(tags$em("Figure: Heatmap showing pairwise network similarity using Jaccard index (0=no shared edges, 1=identical networks)."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1681,7 +1684,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Overlap of top hub nodes (highest centrality) across experimental groups</p>
                        <p><strong>Mathematical basis:</strong> Hub conservation H<sub>AB</sub> = |T<sub>k</sub>(A) ∩ T<sub>k</sub>(B)| / k where T<sub>k</sub>(X) are top k nodes by centrality in network X. 
                        Measures consistency of high-centrality nodes across groups, identifying reproducible network hubs.</p>"),
-                  plotOutput("hubConservationPlot", height = "600px"),
+                  downloadablePlotOutput("hubConservationPlot", height = "600px"),
                   tags$p(tags$em("Figure: Bar plots showing overlap of top hub nodes across experimental groups, measuring consistency of high-centrality nodes."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1690,7 +1693,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Consensus edges that appear consistently across multiple experimental groups</p>
                        <p><strong>Mathematical basis:</strong> Edge conservation C<sub>ij</sub> = (Σ<sub>g</sub> A<sub>ij</sub><sup>g</sup>) / N<sub>groups</sub> where A<sub>ij</sub><sup>g</sup> is adjacency matrix for group g. 
                        Values represent fraction of groups containing each edge. High values indicate robust, reproducible connections across experimental conditions.</p>"),
-                  plotOutput("edgeConservationPlot", height = "600px"),
+                  downloadablePlotOutput("edgeConservationPlot", height = "600px"),
                   tags$p(tags$em("Figure: Heatmap showing consensus edges that appear consistently across experimental groups with color intensity representing conservation frequency."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1861,7 +1864,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Centrality measures using all correlation strengths as edge weights without thresholding</p>
                        <p><strong>Mathematical basis:</strong> Node strength s<sub>i</sub> = Σ<sub>j</sub>|r<sub>ij</sub>| (sum of absolute correlations), weighted eigenvector centrality e<sub>i</sub> from We = λ<sub>max</sub>e. 
                        Preserves information from weak connections that may be discarded by thresholding approaches.</p>"),
-                  plotOutput("weightedNodeMetricsPlot", height = "600px"),
+                  downloadablePlotOutput("weightedNodeMetricsPlot", height = "600px"),
                   tags$p(tags$em("Figure: Box plots showing distribution of weighted centrality measures (node strength and eigenvector centrality) across experimental groups."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1869,7 +1872,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Comprehensive weighted network statistics across all experimental groups</p>
                        <p><strong>Mathematical basis:</strong> Multiple centrality measures calculated on weighted networks: betweenness, closeness, clustering coefficient, and efficiency metrics. 
                        Provides complete statistical profile of network properties using continuous edge weights.</p>"),
-                  plotOutput("allWeightedStatsPlot", height = "600px"),
+                  downloadablePlotOutput("allWeightedStatsPlot", height = "600px"),
                   tags$p(tags$em("Figure: Comprehensive dashboard showing multiple weighted network statistics (betweenness, closeness, clustering, efficiency) across groups."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1880,7 +1883,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Identification and comparison of network hubs across experimental groups using weighted centrality</p>
                        <p><strong>Mathematical basis:</strong> Hubs defined as nodes with weighted eigenvector centrality > μ + kσ (typically k=1.5). 
                        Compares hub sets across groups to identify consistent vs. group-specific high-centrality nodes.</p>"),
-                  plotOutput("weightedEigenvectorHubPlot", height = "600px"),
+                  downloadablePlotOutput("weightedEigenvectorHubPlot", height = "600px"),
                   tags$p(tags$em("Figure: Comparison of network hubs (high weighted eigenvector centrality nodes) across experimental groups."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1888,7 +1891,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Ranking of nodes by weighted eigenvector centrality within each experimental group</p>
                        <p><strong>Mathematical basis:</strong> Ranks nodes by e<sub>i</sub> values where We = λ<sub>max</sub>e using absolute correlation matrix W = |R|. 
                        Identifies most influential nodes in weighted network communication patterns for each group.</p>"),
-                  plotOutput("weightedEigenvectorComparison", height = "600px"),
+                  downloadablePlotOutput("weightedEigenvectorComparison", height = "600px"),
                   tags$p(tags$em("Figure: Ranking comparison of top nodes by weighted eigenvector centrality within each experimental group."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1899,14 +1902,14 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Relationship between node strength (degree) and eigenvector centrality in weighted networks</p>
                        <p><strong>Mathematical basis:</strong> Scatter plot of s<sub>i</sub> = Σ<sub>j</sub>w<sub>ij</sub> vs e<sub>i</sub> from dominant eigenvector of weight matrix. 
                        Reveals whether nodes with high total connection strength also have high influence in network structure.</p>"),
-                  plotOutput("strengthEigenvectorPlot", height = "800px"),
+                  downloadablePlotOutput("strengthEigenvectorPlot", height = "800px"),
                   tags$p(tags$em("Figure: Scatter plots showing relationship between node strength and weighted eigenvector centrality across experimental groups."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
                   HTML("<p><strong>What it measures:</strong> Relationship between weighted eigenvector centrality and node strength within each experimental group</p>
                        <p><strong>Mathematical basis:</strong> Scatter plot of weighted eigenvector centrality e<sub>i</sub> vs node strength s<sub>i</sub> = Σ<sub>j</sub>w<sub>ij</sub> within groups. 
                        Shows correlation between network influence (eigenvector) and total connection strength (node strength) in weighted networks.</p>"),
-                  plotOutput("weightedVsUnweightedPlot", height = "800px"),
+                  downloadablePlotOutput("weightedVsUnweightedPlot", height = "800px"),
                   tags$p(tags$em("Figure: Comparison plots showing relationship between weighted eigenvector centrality and node strength within each experimental group."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1917,7 +1920,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Consistency of eigenvector centrality rankings across different experimental groups</p>
                        <p><strong>Mathematical basis:</strong> Correlation analysis of eigenvector centrality vectors between group pairs: ρ = cor(e<sub>A</sub>, e<sub>B</sub>). 
                        High correlations indicate stable hub identification across experimental conditions.</p>"),
-                  plotOutput("eigenvectorStabilityPlot", height = "600px"),
+                  downloadablePlotOutput("eigenvectorStabilityPlot", height = "600px"),
                   tags$p(tags$em("Figure: Correlation matrix showing stability of eigenvector centrality rankings across different experimental groups."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1925,7 +1928,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Changes in node importance rankings when including edge weight information</p>
                        <p><strong>Mathematical basis:</strong> Rank difference Δr<sub>i</sub> = rank<sub>weighted</sub>(i) - rank<sub>binary</sub>(i) for each node. 
                        Positive values indicate nodes gaining importance when edge weights are considered, negative values show decreased importance.</p>"),
-                  plotOutput("eigenvectorRankChangePlot", height = "600px"),
+                  downloadablePlotOutput("eigenvectorRankChangePlot", height = "600px"),
                   tags$p(tags$em("Figure: Bar plots showing rank changes in node importance from unweighted to weighted analysis (positive=increased importance)."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -1946,7 +1949,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Pairwise similarity between weighted networks using continuous correlation values</p>
                        <p><strong>Mathematical basis:</strong> Weighted Jaccard similarity J<sub>w</sub>(A,B) = Σ<sub>ij</sub>min(w<sub>ij</sub><sup>A</sup>,w<sub>ij</sub><sup>B</sup>) / Σ<sub>ij</sub>max(w<sub>ij</sub><sup>A</sup>,w<sub>ij</sub><sup>B</sup>) where w<sub>ij</sub> = |r<sub>ij</sub>|. 
                        Quantifies similarity in connection strength patterns between experimental groups.</p>"),
-                  plotOutput("weightedSimilarityPlot", height = "600px"),
+                  downloadablePlotOutput("weightedSimilarityPlot", height = "600px"),
                   tags$p(tags$em("Figure: Hierarchically clustered heatmap of weighted network similarity (weighted Jaccard index). Clustering method = complete linkage; distance = Euclidean; dendrograms show group relationships."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1955,7 +1958,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Conservation of high-centrality nodes across groups using weighted measures</p>
                        <p><strong>Mathematical basis:</strong> Hub overlap H<sub>AB</sub> = |H<sub>A</sub> ∩ H<sub>B</sub>| / |H<sub>A</sub> ∪ H<sub>B</sub>| where H<sub>g</sub> are weighted hubs in group g. 
                        Assesses whether nodes with high weighted centrality are consistent across experimental conditions.</p>"),
-                  plotOutput("weightedHubConservationPlot", height = "600px"),
+                  downloadablePlotOutput("weightedHubConservationPlot", height = "600px"),
                   tags$p(tags$em("Figure: Bar plots showing conservation of weighted hubs (high-centrality nodes) across experimental groups."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
                   br(),
@@ -1964,7 +1967,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Statistical properties of edge weights (correlation strengths) across experimental groups</p>
                        <p><strong>Mathematical basis:</strong> Distribution analysis of w<sub>ij</sub> = |r<sub>ij</sub>| values including mean, median, variance, and percentiles. 
                        Box plots compare edge weight distributions between groups to identify differences in overall connectivity strength patterns.</p>"),
-                  plotOutput("weightedEdgeStatisticsPlot", height = "600px"),
+                  downloadablePlotOutput("weightedEdgeStatisticsPlot", height = "600px"),
                   tags$p(tags$em("Figure: Box plots comparing statistical properties (mean, median, variance) of edge weight distributions across experimental groups."), 
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -2128,7 +2131,7 @@ create_results_ui <- function() {
                 tabPanel("5a. Hub Persistence",
                   h5("Hub Persistence Heatmap"),
                   p("Shows which nodes maintain high centrality across different correlation threshold values"),
-                  plotOutput("method_hub_persistence_heatmap", height = "700px"),
+                  downloadablePlotOutput("method_hub_persistence_heatmap", height = "700px"),
                   br(),
 
                   h5("Hub Persistence Scores"),
@@ -2146,7 +2149,7 @@ create_results_ui <- function() {
                                        "Modularity", "Assortativity"),
                              selected = "Density"),
 
-                  plotOutput("method_metrics_evolution", height = "600px"),
+                  downloadablePlotOutput("method_metrics_evolution", height = "600px"),
 
                   helpText("Higher thresholds = more stringent connectivity requirements = sparser networks")
                 ),
@@ -2156,7 +2159,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Distribution of node centrality measures across correlation thresholds for each experimental group</p>
                        <p><strong>Mathematical basis:</strong> Node strength s<sub>i</sub>(τ) = Σ<sub>j</sub>A<sub>ij</sub>(τ) and eigenvector centrality e<sub>i</sub>(τ) where A(τ)e = λ<sub>max</sub>e.
                        Analysis across multiple thresholds τ reveals how hub identification depends on correlation strength cutoffs. Distributions show robustness of centrality measures to threshold selection.</p>"),
-                  plotOutput("persistenceNodeMetricsPlot", height = "700px"),
+                  downloadablePlotOutput("persistenceNodeMetricsPlot", height = "700px"),
                   tags$p(tags$em("Figure: Box plots showing distribution of node strength and eigenvector centrality across correlation thresholds for each experimental group."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -2166,7 +2169,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Identification and comparison of network hubs across correlation thresholds within each experimental group</p>
                        <p><strong>Mathematical basis:</strong> Hubs defined as nodes with eigenvector centrality e<sub>i</sub>(τ) > μ(τ) + kσ(τ) (typically k=1.5) at each threshold τ.
                        Tracks which nodes maintain hub status across varying correlation thresholds, identifying robust vs. threshold-dependent hubs.</p>"),
-                  plotOutput("persistenceHubComparisonPlot", height = "700px"),
+                  downloadablePlotOutput("persistenceHubComparisonPlot", height = "700px"),
                   tags$p(tags$em("Figure: Comparison of network hubs (high eigenvector centrality nodes) across correlation thresholds for each experimental group."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -2176,7 +2179,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Distribution of centrality measures across brain anatomical regions at multiple correlation thresholds</p>
                        <p><strong>Mathematical basis:</strong> Groups nodes by brain regions, computes centrality statistics within regions at each threshold τ.
                        Box plots show median, quartiles, and outliers of degree/eigenvector centrality within each brain area. Reveals how regional importance changes with threshold selection.</p>"),
-                  plotOutput("persistenceRegionalAnalysisPlot", height = "700px"),
+                  downloadablePlotOutput("persistenceRegionalAnalysisPlot", height = "700px"),
                   tags$p(tags$em("Figure: Box plots showing distribution of centrality measures across brain regions at multiple correlation thresholds for each experimental group."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -2188,7 +2191,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> How network structure changes across correlation thresholds</p>
                        <p><strong>Method:</strong> Compares thresholded networks at different cutoff values using weighted Jaccard similarity.
                        High similarity between adjacent thresholds indicates gradual network changes. One heatmap per group.</p>"),
-                  plotOutput("persistenceNetworkSimilarityPlot", height = "900px"),
+                  downloadablePlotOutput("persistenceNetworkSimilarityPlot", height = "900px"),
                   tags$p(tags$em("Figure: Heatmaps showing pairwise similarity between networks at different correlation thresholds for each experimental group."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
 
@@ -2198,7 +2201,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> How similar are networks between experimental groups, averaged across all thresholds</p>
                        <p><strong>Method:</strong> For each threshold, compute Jaccard similarity between groups, then average across all thresholds.
                        Shows which experimental groups have similar network architectures independent of threshold choice.</p>"),
-                  plotOutput("persistenceGroupSimilarityPlot", height = "600px"),
+                  downloadablePlotOutput("persistenceGroupSimilarityPlot", height = "600px"),
                   tags$p(tags$em("Figure: Heatmap showing average network similarity between experimental groups, aggregated across all correlation thresholds."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 )
@@ -2241,7 +2244,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Rank correlation of node strength across methods</p>
                        <p><strong>Method:</strong> Nodes are ranked by strength and eigenvector centrality. Rankings are inverted so 0 = lowest ranked and higher values = more important.
                        Scatter plots show rank agreement. Points on diagonal = perfect agreement. Spearman ρ quantifies correlation.</p>"),
-                  plotOutput("nodeStrengthRankPlot", height = "800px"),
+                  downloadablePlotOutput("nodeStrengthRankPlot", height = "800px"),
                   tags$p(tags$em("Figure: Scatter plots of strength rank vs eigenvector rank (0 = lowest, higher = better). Upper right quadrant contains most important nodes."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -2252,7 +2255,7 @@ create_results_ui <- function() {
                        <p><strong>Method:</strong> For each node, count how many methods (out of 3) identify it as a hub.
                        Robust hubs: identified by all 3. Method-specific: identified by only 1. One Venn diagram per experimental group.</p>"),
 
-                  plotOutput("hubConservationPlot", height = "900px"),
+                  downloadablePlotOutput("hubConservationPlot", height = "900px"),
                   tags$p(tags$em("Figure: Venn diagram showing hub overlap across three methods."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -2261,7 +2264,7 @@ create_results_ui <- function() {
                   h4("🧠 Regional Network Comparison Across Methods"),
                   p("Consensus regional rankings across weighted, percolation, and persistence approaches. One plot per experimental group."),
 
-                  plotOutput("regionalConsensusPlot", height = "900px"),
+                  downloadablePlotOutput("regionalConsensusPlot", height = "900px"),
                   tags$p(tags$em("Figure: Regional-level comparison showing consensus rankings aggregated across all three analytical approaches."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -2271,7 +2274,7 @@ create_results_ui <- function() {
                   HTML("<p><strong>What it measures:</strong> Pairwise similarity between networks from different analytical approaches (Weighted vs Percolation vs Persistence)</p>
                        <p><strong>Method:</strong> Compares networks using weighted Jaccard similarity J<sub>w</sub>(A,B) = Σ min(w<sub>ij</sub><sup>A</sup>, w<sub>ij</sub><sup>B</sup>) / Σ max(w<sub>ij</sub><sup>A</sup>, w<sub>ij</sub><sup>B</sup>).
                        For each correlation method, shows similarity between weighted, percolation, and persistence approaches. One heatmap per experimental group.</p>"),
-                  plotOutput("sharedNetworkSimilarityPlot", height = "900px"),
+                  downloadablePlotOutput("sharedNetworkSimilarityPlot", height = "900px"),
                   tags$p(tags$em("Figure: Heatmap showing pairwise network similarity between analytical approaches for each experimental group using weighted Jaccard index (0=no overlap, 1=identical networks)."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;")
                 ),
@@ -2399,7 +2402,7 @@ create_results_ui <- function() {
                   hr(),
 
                   h5("Significance Plot"),
-                  plotOutput("roiPermutationPlot", height = "500px"),
+                  downloadablePlotOutput("roiPermutationPlot", height = "500px"),
                   tags$p(tags$em("Figure: Bar plot showing -log10(adjusted p-value) for each ROI. Red bars = significant (p < 0.05), gray = not significant."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
 
@@ -2443,12 +2446,12 @@ create_results_ui <- function() {
                   hr(),
 
                   h5("Pairwise Hub Overlap (Venn Diagrams)"),
-                  plotOutput("hubOverlapVennPlot", height = "600px"),
+                  downloadablePlotOutput("hubOverlapVennPlot", height = "600px"),
                   tags$p(tags$em("Figure: Venn diagrams showing hub overlap for each pair of groups. Numbers show unique and shared hubs. Jaccard index (J) quantifies overlap."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
 
                   h5("Hub Overlap Matrix (Jaccard Indices)"),
-                  plotOutput("hubOverlapMatrixPlot", height = "500px"),
+                  downloadablePlotOutput("hubOverlapMatrixPlot", height = "500px"),
                   tags$p(tags$em("Figure: Heatmap showing pairwise Jaccard indices. Warmer colors = higher overlap. Values displayed in cells."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
 
@@ -2505,7 +2508,7 @@ create_results_ui <- function() {
                   hr(),
 
                   h5("Null Distributions & Observed Values"),
-                  plotOutput("globalPermutationPlot", height = "700px"),
+                  downloadablePlotOutput("globalPermutationPlot", height = "700px"),
                   tags$p(tags$em("Figure: Histograms showing null distributions of permuted differences for each global metric. Red line = observed difference, dashed line = no difference (H0). *, **, *** = p < 0.05, 0.01, 0.001."),
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
 
@@ -2705,7 +2708,10 @@ ui <- dashboardPage(
         )
       )
     ),
-    
+
+    # Plot Download Modal (hover-triggered download settings)
+    plot_download_modal_ui(),
+
     # Main app content
     div(
       id = "main-app",
@@ -6958,6 +6964,11 @@ server <- function(input, output, session) {
       })
     }
   )
+
+  # ========================================================================
+  # HOVER DOWNLOAD SERVER (per-plot download buttons)
+  # ========================================================================
+  hover_download_server(input, output, session, analysis_results, ui_state)
 
   # ========================================================================
   # SHARED RESULTS (TAB 6) & CONSENSUS (TAB 7)
