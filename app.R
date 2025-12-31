@@ -8,10 +8,9 @@
 
 required_packages <- c(
   # Core Shiny packages
-
   "shiny", "shinydashboard", "DT", "shinyjs", "colourpicker", "shinyWidgets",
   # Data manipulation and visualization
-  "ggplot2", "scales", "dplyr", "tidyr", "plotly",
+  "ggplot2", "scales", "dplyr", "tidyr", "plotly", "reshape2",
   # Correlation methods
   "psych", "corpcor",
   # Network analysis
@@ -25,7 +24,16 @@ required_packages <- c(
   # Numerical methods
   "pracma",
   # Parallel processing
-  "future", "furrr", "promises", "parallelly"
+  "parallel", "future", "furrr", "promises", "parallelly",
+  # Data export
+  "jsonlite"
+)
+
+# Optional packages (not strictly required but enhance functionality)
+optional_packages <- c(
+  "glmnet",     # For elastic net regularization
+  "progressr",  # For progress bars in parallel processing
+  "WGCNA"       # For weighted gene co-expression network analysis
 )
 
 # Packages for C++ backend (significant performance boost - 50x+ speedup)
@@ -111,6 +119,10 @@ check_build_tools <- function() {
 # Install required packages
 install_if_missing(required_packages)
 
+# Try to install optional packages (don't fail if unavailable)
+message("\n[Optional Packages]")
+install_if_missing(optional_packages, optional = TRUE)
+
 # Install C++ packages for performance boost
 message("\n[C++ Backend Setup]")
 build_tools <- check_build_tools()
@@ -140,29 +152,66 @@ if (build_tools$available) {
 # ============================================================================
 # LOAD PACKAGES
 # ============================================================================
+message("\n[Loading Packages]")
 
-library(shiny)
-library(shinydashboard)
-library(DT)
-library(shinyjs)
-library(colourpicker)
-# library(ggraph)  # Optional - will create alternative if not available
-library(ggplot2)
-# library(patchwork)  # Optional - will create alternative if not available
-library(scales)
-
-# Additional packages for enhanced correlation methods
+# Suppress startup messages for cleaner output
 suppressPackageStartupMessages({
-  # Try to load optional packages for enhanced correlation methods
-  tryCatch(library(psych), error = function(e) cat("Note: psych package not available - some correlation methods will use Pearson fallback\n"))
-  tryCatch(library(corpcor), error = function(e) cat("Note: corpcor package not available - shrinkage correlation will use Pearson fallback\n"))
-  # Load dplyr for data manipulation (with fallback in functions)
-  tryCatch(library(dplyr), error = function(e) cat("Note: dplyr package not available - using base R fallbacks\n"))
-  # Load cluster package for silhouette analysis in hierarchical clustering
-  tryCatch(library(cluster), error = function(e) cat("Note: cluster package not available - silhouette analysis will be limited\n"))
-  # Load dendextend for dendrogram visualization
-  tryCatch(library(dendextend), error = function(e) cat("Note: dendextend package not available - dendrogram coloring will be basic\n"))
+  # Core Shiny packages
+  library(shiny)
+  library(shinydashboard)
+  library(DT)
+  library(shinyjs)
+  library(colourpicker)
+
+  # Data manipulation
+  library(dplyr)
+  library(tidyr)
+  library(reshape2)
+
+  # Visualization
+  library(ggplot2)
+  library(scales)
+  library(corrplot)
+  library(viridis)
+  library(pheatmap)
+  library(RColorBrewer)
+
+  # Network analysis
+  library(igraph)
+
+  # Imputation
+  library(mice)
+
+  # Correlation methods
+  library(psych)
+  library(corpcor)
+
+  # Clustering
+  library(cluster)
+  library(dendextend)
+
+  # Numerical methods
+  library(pracma)
+
+  # Parallel processing
+  library(parallel)
+  library(future)
+  library(furrr)
+  library(promises)
+
+  # Data export
+  library(jsonlite)
+
+  # C++ backend (if available)
+  if (requireNamespace("Rcpp", quietly = TRUE)) {
+    library(Rcpp)
+  }
+  if (requireNamespace("RcppArmadillo", quietly = TRUE)) {
+    library(RcppArmadillo)
+  }
 })
+
+message("All packages loaded successfully")
 
 # Define %||% operator (null-coalescing operator)
 `%||%` <- function(x, y) if(is.null(x)) y else x
