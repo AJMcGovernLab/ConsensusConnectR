@@ -4000,8 +4000,47 @@ server <- function(input, output, session) {
       recommendations$biweight <- list(status = "caution", note = paste0("n=", n_display, " may be too small"))
     }
 
-    # Shrinkage - recommended when n < p
-    if(n_min < p) {
+    # Shrinkage - recommended when n < p, but check for potential issues
+    # Check for complete cases and zero-variance columns that might cause shrinkage to fail
+    shrinkage_viable <- TRUE
+    shrinkage_note <- ""
+
+    # Check complete cases per group
+    if("Group" %in% names(data)) {
+      region_data <- data[, region_cols, drop = FALSE]
+      complete_by_group <- sapply(unique(data$Group), function(g) {
+        group_rows <- data$Group == g
+        group_data <- region_data[group_rows, , drop = FALSE]
+        sum(complete.cases(group_data))
+      })
+      min_complete <- min(complete_by_group)
+    } else {
+      region_data <- data[, region_cols, drop = FALSE]
+      min_complete <- sum(complete.cases(region_data))
+    }
+
+    # Check for zero-variance columns
+    zero_var_cols <- sapply(region_cols, function(col) {
+      if(col %in% names(data)) {
+        col_var <- var(data[[col]], na.rm = TRUE)
+        return(is.na(col_var) || col_var == 0)
+      }
+      return(FALSE)
+    })
+    n_zero_var <- sum(zero_var_cols)
+
+    if(min_complete < 3) {
+      shrinkage_viable <- FALSE
+      shrinkage_note <- sprintf("Too few complete cases (%d)", min_complete)
+    } else if(n_zero_var > 0) {
+      shrinkage_viable <- FALSE
+      shrinkage_note <- sprintf("%d zero-variance columns", n_zero_var)
+    }
+
+    # Generate shrinkage recommendation
+    if(!shrinkage_viable) {
+      recommendations$shrinkage <- list(status = "unavailable", note = shrinkage_note)
+    } else if(n_min < p) {
       recommendations$shrinkage <- list(status = "recommended", note = paste0("n < p (", n_display, " < ", p, ")"))
     } else if(n_min < p * 2) {
       recommendations$shrinkage <- list(status = "available", note = "Helps with estimation stability")
@@ -4099,8 +4138,38 @@ server <- function(input, output, session) {
       selected <- c(selected, "biweight")
     }
 
-    # Shrinkage if n < p
-    if(n_min < p) {
+    # Shrinkage if n < p AND viable (enough complete cases, no zero-variance columns)
+    shrinkage_viable <- TRUE
+
+    # Check complete cases per group
+    if("Group" %in% names(data)) {
+      region_data <- data[, region_cols, drop = FALSE]
+      complete_by_group <- sapply(unique(data$Group), function(g) {
+        group_rows <- data$Group == g
+        group_data <- region_data[group_rows, , drop = FALSE]
+        sum(complete.cases(group_data))
+      })
+      min_complete <- min(complete_by_group)
+    } else {
+      region_data <- data[, region_cols, drop = FALSE]
+      min_complete <- sum(complete.cases(region_data))
+    }
+
+    # Check for zero-variance columns
+    zero_var_cols <- sapply(region_cols, function(col) {
+      if(col %in% names(data)) {
+        col_var <- var(data[[col]], na.rm = TRUE)
+        return(is.na(col_var) || col_var == 0)
+      }
+      return(FALSE)
+    })
+    n_zero_var <- sum(zero_var_cols)
+
+    if(min_complete < 3 || n_zero_var > 0) {
+      shrinkage_viable <- FALSE
+    }
+
+    if(n_min < p && shrinkage_viable) {
       selected <- c(selected, "shrinkage")
     }
 
