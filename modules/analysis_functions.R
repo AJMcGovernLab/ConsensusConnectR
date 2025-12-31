@@ -15,10 +15,25 @@ if(has_mice) library(mice)
 if(has_igraph) library(igraph)
 if(has_dplyr) library(dplyr)
 
+# Helper function to fill remaining NAs with column means
+fill_na_with_column_means <- function(data) {
+  for(col in names(data)) {
+    if(any(is.na(data[[col]]))) {
+      col_mean <- mean(data[[col]], na.rm = TRUE)
+      if(!is.na(col_mean)) {
+        data[[col]][is.na(data[[col]])] <- col_mean
+      }
+    }
+  }
+  return(data)
+}
+
 # Data imputation function
 perform_mice_imputation <- function(data, m = 5, maxit = 10) {
   if(!has_mice) {
-    return(list(imputed_data = data, imputation_needed = FALSE, method = "No MICE available"))
+    # No MICE available - use column means as fallback
+    imputed_data <- fill_na_with_column_means(data)
+    return(list(imputed_data = imputed_data, imputation_needed = TRUE, method = "Column means (MICE unavailable)"))
   }
 
   missing_count <- sum(is.na(data))
@@ -30,14 +45,29 @@ perform_mice_imputation <- function(data, m = 5, maxit = 10) {
     mice_result <- mice(data, m = m, maxit = maxit, printFlag = FALSE, seed = 123)
     imputed_data <- complete(mice_result, 1)
 
+    # Check for any remaining NAs after MICE (can happen in edge cases)
+    remaining_na <- sum(is.na(imputed_data))
+    if(remaining_na > 0) {
+      # Identify which columns still have NAs
+      na_cols <- names(imputed_data)[sapply(imputed_data, function(x) any(is.na(x)))]
+      na_rows <- which(rowSums(is.na(imputed_data)) > 0)
+      message(sprintf("MICE left %d NA value(s) in columns: %s (rows: %s) - filling with column means",
+                     remaining_na, paste(na_cols, collapse = ", "), paste(na_rows, collapse = ", ")))
+      imputed_data <- fill_na_with_column_means(imputed_data)
+    }
+
     return(list(
       imputed_data = imputed_data,
       imputation_needed = TRUE,
       missing_count = missing_count,
-      method = "MICE with PMM"
+      remaining_na_filled = remaining_na,
+      method = if(remaining_na > 0) "MICE + column mean fallback" else "MICE with PMM"
     ))
   }, error = function(e) {
-    return(list(imputed_data = data, imputation_needed = FALSE, error = e$message))
+    # MICE failed - use column means as fallback
+    message(sprintf("MICE failed: %s - using column means", e$message))
+    imputed_data <- fill_na_with_column_means(data)
+    return(list(imputed_data = imputed_data, imputation_needed = TRUE, error = e$message, method = "Column means (MICE failed)"))
   })
 }
 
