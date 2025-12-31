@@ -1845,14 +1845,17 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
   })
 
   # Render plot preview in modal
-  # Shows actual plot scaled to fit, with aspect ratio indicator
+  # Shows aspect ratio box that updates when dimensions change
   output$hover_download_preview <- renderPlot({
     plot_id <- current_plot_id()
     registry <- plot_registry()
 
-    # Get dimensions from inputs
+    # Get dimensions from inputs - these trigger reactivity
     width_in <- as.numeric(input$hover_download_width %||% 10)
     height_in <- as.numeric(input$hover_download_height %||% 8)
+
+    # Calculate aspect ratio for the box
+    aspect <- width_in / height_in
 
     # Show placeholder if no plot selected
     if(is.null(plot_id)) {
@@ -1881,43 +1884,35 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
       return()
     }
 
-    # Try to render actual plot with small margins
-    tryCatch({
-      # Set minimal margins for preview
-      par(mar = c(0.5, 0.5, 0.5, 0.5), cex = 0.6, bg = "white")
-      plot_info$render()
-    }, error = function(e) {
-      # If rendering fails (margin error, etc), show aspect ratio box instead
-      err_msg <- conditionMessage(e)
+    # Show aspect ratio preview box that reacts to dimension changes
+    par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
+         xlim = c(0, 1), ylim = c(0, 1))
 
-      par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
-      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
-           xlim = c(0, 1), ylim = c(0, 1))
+    # Calculate aspect ratio box dimensions
+    if(aspect >= 1) {
+      box_width <- 0.85
+      box_height <- 0.85 / aspect
+    } else {
+      box_height <- 0.7
+      box_width <- 0.7 * aspect
+    }
+    box_x <- (1 - box_width) / 2
+    box_y <- (1 - box_height) / 2 - 0.05
 
-      # Calculate aspect ratio box
-      aspect <- width_in / height_in
-      if(aspect >= 1) {
-        box_width <- 0.8
-        box_height <- 0.8 / aspect
-      } else {
-        box_height <- 0.8
-        box_width <- 0.8 * aspect
-      }
-      box_x <- (1 - box_width) / 2
-      box_y <- (1 - box_height) / 2
+    # Draw the aspect ratio box
+    rect(box_x, box_y, box_x + box_width, box_y + box_height,
+         col = "white", border = "#3498db", lwd = 2)
 
-      rect(box_x, box_y, box_x + box_width, box_y + box_height,
-           col = "white", border = "#3498db", lwd = 2)
+    # Show dimensions at top
+    text(0.5, 0.95, sprintf("%.1f\" x %.1f\"", width_in, height_in),
+         col = "#333", cex = 0.9, font = 2)
 
-      # Show dimensions
-      text(0.5, 0.9, sprintf("%.1f\" x %.1f\"", width_in, height_in),
-           col = "#333", cex = 0.8, font = 2)
-
-      # Format plot name
-      display_name <- gsub("([A-Z])", " \\1", plot_id)
-      display_name <- gsub("Plot$", "", display_name)
-      text(0.5, 0.5, trimws(display_name), col = "#666", cex = 0.7)
-    })
+    # Format and show plot name in center
+    display_name <- gsub("([A-Z])", " \\1", plot_id)
+    display_name <- gsub("Plot$", "", display_name)
+    display_name <- trimws(display_name)
+    text(0.5, box_y + box_height/2, display_name, col = "#666", cex = 0.7)
 
   }, height = 150, bg = "transparent")
 
