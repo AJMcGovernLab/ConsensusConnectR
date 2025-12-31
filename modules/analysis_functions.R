@@ -151,9 +151,9 @@ compute_correlations <- function(data, groups) {
   for(group in unique(groups)) {
     group_data <- data[groups == group, ]
     if(nrow(group_data) > 1 && ncol(group_data) > 1) {
-      
+
       # Compute multiple correlation methods
-      correlation_methods <- compute_correlation_methods(as.matrix(group_data))
+      correlation_methods <- compute_correlation_methods(as.matrix(group_data), group_name = group)
       
       # Create consensus matrix using median
       consensus_matrix <- compute_consensus_correlation(correlation_methods, method = "median")
@@ -185,10 +185,12 @@ compute_correlations <- function(data, groups) {
 }
 
 # Compute multiple correlation methods for robust consensus
-compute_correlation_methods <- function(data_matrix, selected_methods = c("pearson", "spearman", "kendall", "biweight", "shrinkage", "partial")) {
+compute_correlation_methods <- function(data_matrix, selected_methods = c("pearson", "spearman", "kendall", "biweight", "shrinkage", "partial"), group_name = NULL) {
   n_vars <- ncol(data_matrix)
   n_obs <- nrow(data_matrix)
   methods <- list()
+  # Helper for group-aware warnings
+  group_prefix <- if(!is.null(group_name)) paste0("[", group_name, "] ") else ""
 
   # 1. Pearson correlation (parametric)
   if("pearson" %in% selected_methods) {
@@ -237,19 +239,25 @@ compute_correlation_methods <- function(data_matrix, selected_methods = c("pears
   if("shrinkage" %in% selected_methods) {
     tryCatch({
       if(!requireNamespace("corpcor", quietly = TRUE)) {
-        warning("Shrinkage skipped: corpcor package not available")
+        warning(paste0(group_prefix, "Shrinkage skipped: corpcor package not available"))
       } else {
         library(corpcor)
 
-        # Check for zero-variance columns (causes cor.shrink to fail)
-        # This can happen if imputation produces constant values for a column
-        col_vars <- apply(data_matrix, 2, var)
-        zero_var_cols <- which(col_vars == 0 | is.na(col_vars))
+        # Check for zero/near-zero variance columns (causes cor.shrink to fail)
+        # Use small tolerance to catch numerical precision issues
+        col_vars <- apply(data_matrix, 2, var, na.rm = TRUE)
+        var_tolerance <- .Machine$double.eps * 100  # Small tolerance for numerical stability
+        zero_var_cols <- which(col_vars < var_tolerance | is.na(col_vars))
 
         if(length(zero_var_cols) > 0) {
-          warning(sprintf("Shrinkage skipped: %d zero-variance columns detected", length(zero_var_cols)))
+          zero_var_names <- colnames(data_matrix)[zero_var_cols]
+          zero_var_values <- round(col_vars[zero_var_cols], 10)
+          warning(sprintf("%sShrinkage skipped: %d zero/near-zero variance columns detected (%s; var=%s)",
+                         group_prefix, length(zero_var_cols),
+                         paste(zero_var_names, collapse = ", "),
+                         paste(zero_var_values, collapse = ", ")))
         } else if(nrow(data_matrix) < 3) {
-          warning(sprintf("Shrinkage skipped: insufficient samples (%d < 3)", nrow(data_matrix)))
+          warning(sprintf("%sShrinkage skipped: insufficient samples (%d < 3)", group_prefix, nrow(data_matrix)))
         } else {
           # All checks passed - compute shrinkage
           shrink_result <- cor.shrink(data_matrix, verbose = FALSE)
@@ -257,7 +265,7 @@ compute_correlation_methods <- function(data_matrix, selected_methods = c("pears
         }
       }
     }, error = function(e) {
-      warning(paste0("Shrinkage skipped: ", conditionMessage(e)))
+      warning(paste0(group_prefix, "Shrinkage skipped: ", conditionMessage(e)))
     })
   }
 
@@ -338,7 +346,7 @@ compute_correlations_by_method <- function(data, groups, selected_methods = c("p
     if(nrow(group_data) > 1 && ncol(group_data) > 1) {
 
       # Compute only selected correlation methods
-      methods <- compute_correlation_methods(as.matrix(group_data), selected_methods)
+      methods <- compute_correlation_methods(as.matrix(group_data), selected_methods, group_name = group)
 
       # Store each method separately (only for selected methods)
       for(method_name in selected_methods) {
