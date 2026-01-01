@@ -458,17 +458,21 @@ calibrate_parallel_performance <- function(analysis_results,
   # =========================================================================
   if (verbose) message("Using R backend for calibration...")
 
-  # Determine target worker count (use parallelly to respect connection limits)
-  max_available_cores <- parallelly::availableCores(omit = 1)
+  # Determine target worker count with safety caps for R connection limits
+  max_safe_workers <- min(
+    parallelly::availableCores(omit = 1),
+    parallelly::freeConnections() - 4,  # Leave connections for safety
+    60  # Hard cap - diminishing returns above this
+  )
+  max_safe_workers <- max(1, max_safe_workers)
+
   if (is.null(target_workers) || target_workers == "auto") {
-    # Default: use availableCores which respects system limits
-    target_workers <- max_available_cores
+    target_workers <- max_safe_workers
   } else {
     target_workers <- as.integer(target_workers)
   }
-  # Ensure target_workers doesn't exceed available cores
-
-  target_workers <- min(target_workers, max_available_cores)
+  # Ensure target_workers doesn't exceed safe limit
+  target_workers <- min(target_workers, max_safe_workers)
 
   if (verbose) message("Target worker count: ", target_workers)
 
@@ -640,9 +644,12 @@ determine_optimal_workers <- function(n_candidates,
   # Total serial computation time
   total_compute_ms <- n_candidates * n_permutations * compute_time_ms
 
-  # Available cores
-
-  max_cores <- min(parallelly::availableCores(omit = 1), n_candidates)
+  # Available cores (with safety cap for R connection limits)
+  max_cores <- min(
+    parallelly::availableCores(omit = 1),
+    60,  # Hard cap for R connection limits
+    n_candidates
+  )
   max_cores <- max(1, max_cores)
 
   # If we have calibration data with actual measurements, use best measured config
@@ -2471,11 +2478,19 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
   # Setup parallel processing if requested
   if(use_parallel && PARALLEL_AVAILABLE) {
     # Determine number of workers (handle NULL, "auto", or numeric)
-    # Use parallelly::availableCores() to respect R connection limits
+    # Use parallelly::availableCores() but also enforce hard cap for R connection limits
+    # R has max 128 connections by default, need to leave some for other uses
+    max_safe_workers <- min(
+      parallelly::availableCores(omit = 1),
+      parallelly::freeConnections() - 4,  # Leave 4 connections for safety
+      60  # Hard cap - diminishing returns above this anyway
+    )
+    max_safe_workers <- max(1, max_safe_workers)  # Ensure at least 1
+
     if(is.null(n_workers) || identical(n_workers, "auto") || !is.numeric(n_workers)) {
-      n_workers <- parallelly::availableCores(omit = 1)
+      n_workers <- max_safe_workers
     } else {
-      n_workers <- min(as.integer(n_workers), parallelly::availableCores(omit = 1))
+      n_workers <- min(as.integer(n_workers), max_safe_workers)
     }
     # Set up future plan
     old_plan <- future::plan()
