@@ -2585,6 +2585,12 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
       p_values <- cpp_results$p_value
       names(p_values) <- regions
 
+      # Get CI bounds from C++ results
+      ci_lower_vals <- cpp_results$ci_lower
+      ci_upper_vals <- cpp_results$ci_upper
+      names(ci_lower_vals) <- regions
+      names(ci_upper_vals) <- regions
+
       # Apply correction
       if(correction_method == "fdr") {
         p_adjusted <- p.adjust(p_values, method = "BH")
@@ -2594,10 +2600,12 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
         p_adjusted <- p_values
       }
 
-      # Add to observed results
+      # Add to observed results (including CI bounds for plotting)
       observed$P_Value <- p_values[observed$Region]
       observed$P_Adjusted <- p_adjusted[observed$Region]
       observed$Significant <- !is.na(observed$P_Adjusted) & observed$P_Adjusted < 0.05
+      observed$CI_Lower <- ci_lower_vals[observed$Region]
+      observed$CI_Upper <- ci_upper_vals[observed$Region]
 
       # Significance stars
       observed$Significance_Stars <- ""
@@ -2607,7 +2615,7 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
 
       return(list(
         observed = observed,
-        null_distributions = NULL,  # C++ doesn't return full null distributions
+        null_distributions = NULL,  # C++ returns CI bounds instead
         n_permutations = n_permutations,
         n_combinations = n_combinations,
         analysis_level = analysis_level,

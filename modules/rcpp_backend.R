@@ -394,6 +394,8 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
         return(data.frame(
           p_value = result$p_values,
           observed = result$observed_values,
+          ci_lower = result$ci_lower,
+          ci_upper = result$ci_upper,
           method = "cpp"
         ))
       }
@@ -401,6 +403,8 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
       # Process in chunks for progress updates
       all_p_values <- numeric(n_candidates)
       all_observed <- numeric(n_candidates)
+      all_ci_lower <- numeric(n_candidates)
+      all_ci_upper <- numeric(n_candidates)
       n_chunks <- ceiling(n_candidates / chunk_size)
 
       for (chunk_idx in 1:n_chunks) {
@@ -420,6 +424,8 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
 
         all_p_values[chunk_range] <- chunk_result$p_values
         all_observed[chunk_range] <- chunk_result$observed_values
+        all_ci_lower[chunk_range] <- chunk_result$ci_lower
+        all_ci_upper[chunk_range] <- chunk_result$ci_upper
 
         # Report progress
         progress_callback(end_idx / n_candidates)
@@ -428,6 +434,8 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
       return(data.frame(
         p_value = all_p_values,
         observed = all_observed,
+        ci_lower = all_ci_lower,
+        ci_upper = all_ci_upper,
         method = "cpp"
       ))
 

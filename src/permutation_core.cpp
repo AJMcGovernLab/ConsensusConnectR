@@ -402,6 +402,8 @@ Rcpp::List batch_permutation_test_cpp(
   // Allocate results
   std::vector<double> p_values(n_candidates);
   std::vector<double> observed_values(n_candidates);
+  std::vector<double> ci_lower(n_candidates);
+  std::vector<double> ci_upper(n_candidates);
 
   // Determine threads
   int max_threads = 1;
@@ -460,11 +462,26 @@ Rcpp::List batch_permutation_test_cpp(
       }
     }
     p_values[c] = (double)(count_extreme + 1) / (double)(n_permutations + 1);
+
+    // Compute 95% CI (2.5% and 97.5% quantiles) from null distribution
+    // Sort a copy of null_dist to find quantiles
+    std::vector<double> sorted_null = null_dist;
+    std::sort(sorted_null.begin(), sorted_null.end());
+
+    int idx_lower = (int)(0.025 * n_permutations);
+    int idx_upper = (int)(0.975 * n_permutations);
+    if (idx_lower < 0) idx_lower = 0;
+    if (idx_upper >= n_permutations) idx_upper = n_permutations - 1;
+
+    ci_lower[c] = sorted_null[idx_lower];
+    ci_upper[c] = sorted_null[idx_upper];
   }
 
   return Rcpp::List::create(
     Rcpp::Named("p_values") = Rcpp::wrap(p_values),
     Rcpp::Named("observed_values") = Rcpp::wrap(observed_values),
+    Rcpp::Named("ci_lower") = Rcpp::wrap(ci_lower),
+    Rcpp::Named("ci_upper") = Rcpp::wrap(ci_upper),
     Rcpp::Named("n_candidates") = n_candidates,
     Rcpp::Named("n_permutations") = n_permutations,
     Rcpp::Named("n_threads") = n_threads

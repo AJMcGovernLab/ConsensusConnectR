@@ -3483,13 +3483,20 @@ server <- function(input, output, session) {
 
     n_regions <- nrow(observed)
 
-    # Compute confidence intervals from null distribution
+    # Get confidence intervals - either from observed (C++ path) or null distribution (R path)
     ci_lower <- numeric(n_regions)
     ci_upper <- numeric(n_regions)
 
     for(i in 1:n_regions) {
       region <- observed$Region[i]
-      if(!is.null(null_dist) && region %in% colnames(null_dist)) {
+
+      # First try CI columns from observed (C++ backend provides these directly)
+      if("CI_Lower" %in% names(observed) && "CI_Upper" %in% names(observed)) {
+        ci_lower[i] <- observed$CI_Lower[i]
+        ci_upper[i] <- observed$CI_Upper[i]
+      }
+      # Fall back to computing from null distribution (R backend)
+      else if(!is.null(null_dist) && region %in% colnames(null_dist)) {
         null_vals <- null_dist[, region]
         null_vals <- null_vals[!is.na(null_vals)]
         if(length(null_vals) > 0) {
