@@ -1131,8 +1131,70 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
                     ylab = "Contribution")
           }
         } else {
-          # Standard brain area mode
-          if(!is.null(results$regional_results)) {
+          # Standard brain area mode - use contribution results with CI for error bars
+          if(!is.null(results$contribution) && !is.null(results$contribution$observed)) {
+            observed <- results$contribution$observed
+            null_dist <- results$contribution$null_distributions
+
+            n_regions <- nrow(observed)
+            par(mar = c(5, 12, 4, 4))
+
+            # Get CI values - either from observed (C++ backend) or null distribution (R backend)
+            ci_lower <- numeric(n_regions)
+            ci_upper <- numeric(n_regions)
+
+            for(i in 1:n_regions) {
+              region <- observed$Region[i]
+              if("CI_Lower" %in% names(observed) && "CI_Upper" %in% names(observed)) {
+                ci_lower[i] <- observed$CI_Lower[i]
+                ci_upper[i] <- observed$CI_Upper[i]
+              } else if(!is.null(null_dist) && region %in% colnames(null_dist)) {
+                null_vals <- null_dist[, region]
+                null_vals <- null_vals[!is.na(null_vals)]
+                if(length(null_vals) > 0) {
+                  ci_lower[i] <- quantile(null_vals, 0.025, na.rm = TRUE)
+                  ci_upper[i] <- quantile(null_vals, 0.975, na.rm = TRUE)
+                }
+              }
+            }
+
+            # Determine colors
+            bar_colors <- rep("#3498DB", n_regions)
+            bar_colors[observed$Contribution_Score > 0 & observed$Significant] <- "#E74C3C"
+            bar_colors[observed$Contribution_Score <= 0 & observed$Significant] <- "#27AE60"
+
+            # Calculate x limits
+            x_vals <- c(observed$Contribution_Score, ci_lower, ci_upper)
+            x_vals <- x_vals[!is.na(x_vals) & is.finite(x_vals)]
+            x_max <- max(abs(x_vals), na.rm = TRUE) * 1.3
+
+            # Create barplot
+            bp <- barplot(observed$Contribution_Score, horiz = TRUE, names.arg = observed$Region,
+                          col = bar_colors, las = 1, xlim = c(-x_max, x_max),
+                          xlab = "Contribution Score", main = "Regional Contribution Analysis",
+                          cex.names = 0.7)
+
+            # Add error bars
+            for(i in 1:n_regions) {
+              if(!is.na(ci_lower[i]) && !is.na(ci_upper[i])) {
+                segments(ci_lower[i], bp[i], ci_upper[i], bp[i], lwd = 1.5, col = "gray40")
+                segments(ci_lower[i], bp[i] - 0.2, ci_lower[i], bp[i] + 0.2, lwd = 1.5, col = "gray40")
+                segments(ci_upper[i], bp[i] - 0.2, ci_upper[i], bp[i] + 0.2, lwd = 1.5, col = "gray40")
+              }
+            }
+
+            abline(v = 0, lty = 2, lwd = 2, col = "gray50")
+
+            # Add significance stars
+            for(i in 1:n_regions) {
+              if(!is.na(observed$Significance_Stars[i]) && observed$Significance_Stars[i] != "") {
+                x_pos <- observed$Contribution_Score[i]
+                x_pos <- x_pos + sign(x_pos) * x_max * 0.05
+                text(x_pos, bp[i], observed$Significance_Stars[i], cex = 1.0, font = 2)
+              }
+            }
+          } else if(!is.null(results$regional_results)) {
+            # Fallback to old format
             par(mar = c(10, 5, 3, 2))
             reg <- results$regional_results
             colors <- ifelse(reg$significant, ifelse(reg$contribution > 0, "#E74C3C", "#3498DB"), "#CCCCCC")
