@@ -458,11 +458,11 @@ calibrate_parallel_performance <- function(analysis_results,
   # =========================================================================
   if (verbose) message("Using R backend for calibration...")
 
-  # Determine target worker count
-  max_available_cores <- parallel::detectCores()
+  # Determine target worker count (use parallelly to respect connection limits)
+  max_available_cores <- parallelly::availableCores(omit = 1)
   if (is.null(target_workers) || target_workers == "auto") {
-    # Default: use all cores minus 1 (leave one for system)
-    target_workers <- max(1, max_available_cores - 1)
+    # Default: use availableCores which respects system limits
+    target_workers <- max_available_cores
   } else {
     target_workers <- as.integer(target_workers)
   }
@@ -642,7 +642,7 @@ determine_optimal_workers <- function(n_candidates,
 
   # Available cores
 
-  max_cores <- min(parallel::detectCores() - 1, n_candidates)
+  max_cores <- min(parallelly::availableCores(omit = 1), n_candidates)
   max_cores <- max(1, max_cores)
 
   # If we have calibration data with actual measurements, use best measured config
@@ -1029,7 +1029,7 @@ compute_permutation_test <- function(group1_data,
 
   # Run permutations (parallel if cores > 1)
   if(parallel_cores > 1) {
-    cl <- makeCluster(min(parallel_cores, detectCores() - 1))
+    cl <- makeCluster(min(parallel_cores, parallelly::availableCores(omit = 1)))
     clusterExport(cl, c("combined_data", "n1", "n_total"), envir = environment())
 
     null_distribution <- parSapply(cl, 1:n_permutations, function(i) {
@@ -1188,7 +1188,7 @@ compute_network_based_statistics <- function(correlation_matrices_group1,
 
   # Run permutations (parallel if requested)
   if(parallel_cores > 1) {
-    cl <- makeCluster(min(parallel_cores, detectCores() - 1))
+    cl <- makeCluster(min(parallel_cores, parallelly::availableCores(omit = 1)))
     clusterExport(cl, c("all_matrices", "n1", "n_total", "n_nodes", "threshold"),
                   envir = environment())
     clusterEvalQ(cl, library(igraph))
@@ -2471,10 +2471,11 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
   # Setup parallel processing if requested
   if(use_parallel && PARALLEL_AVAILABLE) {
     # Determine number of workers (handle NULL, "auto", or numeric)
+    # Use parallelly::availableCores() to respect R connection limits
     if(is.null(n_workers) || identical(n_workers, "auto") || !is.numeric(n_workers)) {
-      n_workers <- max(1, parallel::detectCores() - 1)
+      n_workers <- parallelly::availableCores(omit = 1)
     } else {
-      n_workers <- as.integer(n_workers)
+      n_workers <- min(as.integer(n_workers), parallelly::availableCores(omit = 1))
     }
     # Set up future plan
     old_plan <- future::plan()

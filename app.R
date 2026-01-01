@@ -1064,11 +1064,11 @@ create_summary_ui <- function() {
                               "Number of Workers:",
                               choices = c("Auto (Recommended)" = "auto",
                                          setNames(c(1, 2, 4, 8, 16, 32, 64,
-                                                    parallel::detectCores() - 1,
-                                                    parallel::detectCores()),
+                                                    parallelly::availableCores(omit = 1),
+                                                    parallelly::availableCores()),
                                                  c("1 (Serial)", "2", "4", "8", "16", "32", "64",
-                                                   paste0(parallel::detectCores() - 1, " (All-1)"),
-                                                   paste0(parallel::detectCores(), " (All)")))),
+                                                   paste0(parallelly::availableCores(omit = 1), " (All-1)"),
+                                                   paste0(parallelly::availableCores(), " (All)")))),
                               selected = "auto"),
                   tags$small(id = "worker_recommendation",
                             "Auto mode selects optimal worker count based on calibration",
@@ -9388,7 +9388,7 @@ server <- function(input, output, session) {
         if(!is.null(ui_state$calibration_data) && !is.null(ui_state$calibration_data$optimal_workers)) {
           ui_state$calibration_data$optimal_workers
         } else {
-          max(1, min(8, parallel::detectCores() - 1))  # Conservative default
+          max(1, min(8, parallelly::availableCores(omit = 1)))  # Conservative default
         }
       } else {
         as.numeric(worker_input)
@@ -9542,9 +9542,9 @@ server <- function(input, output, session) {
     # Determine target worker count from user selection
     worker_input <- input$n_parallel_workers
     target_workers <- if (is.null(worker_input) || worker_input == "auto") {
-      max(1, parallel::detectCores() - 1)
+      parallelly::availableCores(omit = 1)
     } else {
-      as.numeric(worker_input)
+      min(as.numeric(worker_input), parallelly::availableCores(omit = 1))
     }
 
     progress_msg <- if (cpp_available) {
@@ -9607,7 +9607,7 @@ server <- function(input, output, session) {
               spawn_info, "<br>",
               "<strong>", calibration$recommendation, "</strong><br>",
               "<em style='font-size: 0.85em;'>Install Rcpp + RcppArmadillo for ",
-              max(2, parallel::detectCores()), "x speedup</em>"
+              max(2, parallelly::availableCores()), "x speedup</em>"
             )),
             type = "warning",
             duration = 12
