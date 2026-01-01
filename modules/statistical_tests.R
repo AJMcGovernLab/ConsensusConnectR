@@ -2541,6 +2541,87 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
   if(is.null(node_names)) node_names <- colnames(first_mat)
   n_nodes <- length(node_names)
 
+  # =============================================================================
+  # C++ BACKEND PATH (when available) - Much faster for high core counts
+  # =============================================================================
+  cpp_available <- exists("CPP_BACKEND_AVAILABLE") && isTRUE(CPP_BACKEND_AVAILABLE) &&
+                   exists("batch_test_candidates_fast", mode = "function")
+
+  if(cpp_available) {
+    message("[Regional Contribution] Using C++ backend with OpenMP")
+
+    # Build candidates list - each region/area becomes a candidate
+    candidates_list <- lapply(regions, function(region) {
+      if(analysis_level == "subregion") {
+        region  # Single subregion
+      } else {
+        brain_areas[[region]]  # Multiple subregions for collective area
+      }
+    })
+    names(candidates_list) <- regions
+
+    # Get thread count from C++ backend
+    n_threads <- if(exists("CPP_OPENMP_THREADS")) CPP_OPENMP_THREADS else 0
+
+    # Run batch test using C++ (handles all regions in parallel)
+    cpp_results <- tryCatch({
+      batch_test_candidates_fast(
+        networks_g1 = networks_g1,
+        networks_g2 = networks_g2,
+        node_names = node_names,
+        candidates_list = candidates_list,
+        n_permutations = n_permutations,
+        n_threads = n_threads,
+        progress_callback = progress_callback
+      )
+    }, error = function(e) {
+      message("[Regional Contribution] C++ backend failed: ", e$message)
+      message("[Regional Contribution] Falling back to R backend")
+      NULL
+    })
+
+    if(!is.null(cpp_results)) {
+      # C++ succeeded - build results from cpp_results
+      p_values <- cpp_results$p_value
+      names(p_values) <- regions
+
+      # Apply correction
+      if(correction_method == "fdr") {
+        p_adjusted <- p.adjust(p_values, method = "BH")
+      } else if(correction_method == "bonferroni") {
+        p_adjusted <- p.adjust(p_values, method = "bonferroni")
+      } else {
+        p_adjusted <- p_values
+      }
+
+      # Add to observed results
+      observed$P_Value <- p_values[observed$Region]
+      observed$P_Adjusted <- p_adjusted[observed$Region]
+      observed$Significant <- !is.na(observed$P_Adjusted) & observed$P_Adjusted < 0.05
+
+      # Significance stars
+      observed$Significance_Stars <- ""
+      observed$Significance_Stars[!is.na(observed$P_Adjusted) & observed$P_Adjusted < 0.05] <- "*"
+      observed$Significance_Stars[!is.na(observed$P_Adjusted) & observed$P_Adjusted < 0.01] <- "**"
+      observed$Significance_Stars[!is.na(observed$P_Adjusted) & observed$P_Adjusted < 0.001] <- "***"
+
+      return(list(
+        observed = observed,
+        null_distributions = NULL,  # C++ doesn't return full null distributions
+        n_permutations = n_permutations,
+        n_combinations = n_combinations,
+        analysis_level = analysis_level,
+        correction_method = correction_method,
+        backend = "cpp"
+      ))
+    }
+  }
+
+  # =============================================================================
+  # R BACKEND PATH (fallback when C++ not available)
+  # =============================================================================
+  message("[Regional Contribution] Using R backend")
+
   # Helper function for single permutation
   run_single_perm_contribution <- function(perm_idx, networks_g1, networks_g2,
                                             node_names, n_nodes, regions,
@@ -2654,7 +2735,8 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
     n_permutations = n_permutations,
     n_combinations = n_combinations,
     analysis_level = analysis_level,
-    correction_method = correction_method
+    correction_method = correction_method,
+    backend = "R"
   ))
 }
 
