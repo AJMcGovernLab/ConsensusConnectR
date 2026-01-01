@@ -2470,9 +2470,11 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
 
   # Setup parallel processing if requested
   if(use_parallel && PARALLEL_AVAILABLE) {
-    # Determine number of workers
-    if(is.null(n_workers)) {
+    # Determine number of workers (handle NULL, "auto", or numeric)
+    if(is.null(n_workers) || identical(n_workers, "auto") || !is.numeric(n_workers)) {
       n_workers <- max(1, parallel::detectCores() - 1)
+    } else {
+      n_workers <- as.integer(n_workers)
     }
     # Set up future plan
     old_plan <- future::plan()
