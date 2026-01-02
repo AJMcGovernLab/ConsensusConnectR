@@ -1645,14 +1645,14 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
         top_dissim <- discovery$top_dissimilarity
         top_sim <- discovery$top_similarity
 
-        # Filter for significant AND non-redundant (positive synergy for multi-region combos)
+        # Filter for significant AND synergistic/additive (non-redundant)
         sig_nonredundant <- data.frame()
 
         if(!is.null(top_dissim) && nrow(top_dissim) > 0) {
           sig_d <- top_dissim[top_dissim$significant == TRUE, ]
           if(nrow(sig_d) > 0) {
             if("synergy" %in% names(sig_d)) {
-              sig_d <- sig_d[sig_d$size == 1 | (!is.na(sig_d$synergy) & sig_d$synergy > 0), ]
+              sig_d <- sig_d[sig_d$size == 1 | (!is.na(sig_d$synergy) & sig_d$synergy >= 0), ]
             }
             if(nrow(sig_d) > 0) {
               sig_d$direction <- "Dissimilarity"
@@ -1665,7 +1665,7 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
           sig_s <- top_sim[top_sim$significant == TRUE, ]
           if(nrow(sig_s) > 0) {
             if("synergy" %in% names(sig_s)) {
-              sig_s <- sig_s[sig_s$size == 1 | (!is.na(sig_s$synergy) & sig_s$synergy < 0), ]
+              sig_s <- sig_s[sig_s$size == 1 | (!is.na(sig_s$synergy) & sig_s$synergy <= 0), ]
             }
             if(nrow(sig_s) > 0) {
               sig_s$direction <- "Similarity"
@@ -1746,7 +1746,7 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
                fill = c("#E74C3C", "#3498DB"),
                bty = "n", cex = 0.7)
 
-        mtext("Only showing combinations with synergistic effects (non-redundant)",
+        mtext("Only showing significant synergistic/additive combinations or single regions",
               side = 1, line = 4, cex = 0.75, col = "gray40")
       }
     ),

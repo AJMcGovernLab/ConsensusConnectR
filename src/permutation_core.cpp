@@ -234,16 +234,19 @@ Rcpp::List parallel_permutation_test_cpp(
   int n_nodes = arma_g1[0].n_rows;
 
   // Determine number of threads
-  int max_threads = 1;
+  // If n_threads is explicitly specified (> 0), trust that value from R
+  // which has already done system core detection
   #ifdef _OPENMP
-  max_threads = omp_get_max_threads();
-  #endif
-
   if (n_threads <= 0) {
-    n_threads = max_threads;
+    n_threads = omp_get_max_threads();
   } else {
-    n_threads = std::min(n_threads, max_threads);
+    // Try to set OpenMP to use the requested thread count
+    // This may exceed omp_get_max_threads() if R detected more cores
+    omp_set_num_threads(n_threads);
   }
+  #else
+  n_threads = 1;
+  #endif
 
   // Compute observed statistic (single-threaded, before parallel region)
   arma::uvec empty_exclude;
@@ -406,14 +409,17 @@ Rcpp::List batch_permutation_test_cpp(
   std::vector<double> ci_upper(n_candidates);
 
   // Determine threads
-  int max_threads = 1;
+  // If n_threads is explicitly specified (> 0), trust that value from R
   #ifdef _OPENMP
-  max_threads = omp_get_max_threads();
-  #endif
-
   if (n_threads <= 0) {
-    n_threads = max_threads;
+    n_threads = omp_get_max_threads();
+  } else {
+    // Try to set OpenMP to use the requested thread count
+    omp_set_num_threads(n_threads);
   }
+  #else
+  n_threads = 1;
+  #endif
 
   // Parallel loop over candidates - now using only C++ data structures
   #ifdef _OPENMP

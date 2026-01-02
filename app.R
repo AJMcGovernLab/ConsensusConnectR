@@ -1132,10 +1132,10 @@ create_summary_ui <- function() {
               tags$p(tags$em("Note: This section displays results from Artificial Brain Area Discovery mode."),
                      style = "font-size: 0.85em; color: #888;"),
               downloadablePlotOutput("artificialCombinationsSummaryPlot", height = "600px"),
-              tags$p(tags$em("Figure: Horizontal bar plot showing significant artificial region combinations with positive synergy
-                     (non-redundant). Combinations are colored by direction: red = dissimilarity drivers (regions whose removal
-                     increases group similarity), blue = similarity drivers. Only combinations where the combined effect exceeds
-                     the sum of individual effects are shown. Error bars show 95% CI from permutation null distribution."),
+              tags$p(tags$em("Figure: Horizontal bar plot showing significant artificial region combinations that are synergistic,
+                     additive, or single regions. Combinations are colored by direction: red = dissimilarity drivers (regions whose removal
+                     increases group similarity), blue = similarity drivers. Redundant combinations (where combined effect is less than
+                     the sum of individual effects) are excluded."),
                      style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
               hr()
             ),
@@ -11067,17 +11067,17 @@ server <- function(input, output, session) {
     top_dissim <- discovery$top_dissimilarity
     top_sim <- discovery$top_similarity
 
-    # Filter for significant AND non-redundant (positive synergy for multi-region combos)
+    # Filter for significant AND synergistic/additive (non-redundant)
     # For singles, always include if significant
-    # For multi-region, require synergy > 0 (combo effect exceeds sum of individual effects)
+    # For multi-region, require synergy >= 0 (synergistic or additive, excluding redundant)
     sig_nonredundant <- data.frame()
 
     if(!is.null(top_dissim) && nrow(top_dissim) > 0) {
       sig_d <- top_dissim[top_dissim$significant == TRUE, ]
       if(nrow(sig_d) > 0) {
-        # For multi-region combos, filter for positive synergy
+        # For multi-region combos, filter for synergistic (>0) or additive (=0), exclude redundant (<0)
         if("synergy" %in% names(sig_d)) {
-          sig_d <- sig_d[sig_d$size == 1 | (!is.na(sig_d$synergy) & sig_d$synergy > 0), ]
+          sig_d <- sig_d[sig_d$size == 1 | (!is.na(sig_d$synergy) & sig_d$synergy >= 0), ]
         }
         if(nrow(sig_d) > 0) {
           sig_d$direction <- "Dissimilarity"
@@ -11089,9 +11089,9 @@ server <- function(input, output, session) {
     if(!is.null(top_sim) && nrow(top_sim) > 0) {
       sig_s <- top_sim[top_sim$significant == TRUE, ]
       if(nrow(sig_s) > 0) {
-        # For multi-region combos, filter for positive synergy (in absolute terms)
+        # For multi-region combos, filter for synergistic (<0) or additive (=0), exclude redundant (>0)
         if("synergy" %in% names(sig_s)) {
-          sig_s <- sig_s[sig_s$size == 1 | (!is.na(sig_s$synergy) & sig_s$synergy < 0), ]
+          sig_s <- sig_s[sig_s$size == 1 | (!is.na(sig_s$synergy) & sig_s$synergy <= 0), ]
         }
         if(nrow(sig_s) > 0) {
           sig_s$direction <- "Similarity"
@@ -11190,7 +11190,7 @@ server <- function(input, output, session) {
              bty = "n", cex = 0.7)
 
       # Add synergy note
-      mtext("Only showing combinations with synergistic effects (non-redundant)",
+      mtext("Only showing significant synergistic/additive combinations or single regions",
             side = 1, line = 4, cex = 0.75, col = "gray40")
 
     }, error = function(e) {

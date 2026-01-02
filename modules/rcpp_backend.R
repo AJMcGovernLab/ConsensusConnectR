@@ -90,7 +90,32 @@ initialize_cpp_backend <- function(verbose = TRUE) {
 
     # Get OpenMP info
     omp_info <- get_openmp_info()
-    CPP_OPENMP_THREADS <<- omp_info$max_threads
+    omp_threads <- omp_info$max_threads
+
+    # Auto-detect system cores as fallback/comparison
+    system_cores <- tryCatch({
+      parallel::detectCores(logical = TRUE)
+    }, error = function(e) NA)
+
+    # If OpenMP reports fewer threads than system has, try to fix it
+    if (!is.na(system_cores) && system_cores > omp_threads) {
+      if (verbose) {
+        message("[CPP Backend] OpenMP reports ", omp_threads, " threads but system has ", system_cores, " cores")
+        message("[CPP Backend] Setting OMP_NUM_THREADS=", system_cores, " to use all cores")
+      }
+      # Set environment variable for current and future OpenMP calls
+      Sys.setenv(OMP_NUM_THREADS = system_cores)
+      Sys.setenv(OMP_THREAD_LIMIT = system_cores)
+
+      # Re-query OpenMP to see if it picked up the change
+      omp_info <- get_openmp_info()
+      omp_threads <- omp_info$max_threads
+
+      # Use the higher of OpenMP reported or system detected
+      CPP_OPENMP_THREADS <<- max(omp_threads, system_cores)
+    } else {
+      CPP_OPENMP_THREADS <<- omp_threads
+    }
 
     CPP_BACKEND_AVAILABLE <<- TRUE
     CPP_BACKEND_ERROR <<- NULL
@@ -98,6 +123,7 @@ initialize_cpp_backend <- function(verbose = TRUE) {
     if (verbose) {
       message("[CPP Backend] Successfully compiled!")
       message("[CPP Backend] OpenMP available: ", omp_info$openmp_available)
+      message("[CPP Backend] System cores detected: ", ifelse(is.na(system_cores), "unknown", system_cores))
       message("[CPP Backend] Max threads: ", CPP_OPENMP_THREADS)
     }
 
@@ -233,13 +259,19 @@ test_combined_contribution_cpp_wrapper <- function(networks_g1, networks_g2, nod
   # Validate n_permutations
   n_permutations <- max(1L, as.integer(n_permutations))
 
+  # Use auto-detected thread count if n_threads is 0 or not specified
+  # This ensures we use the system-detected cores even if OpenMP reports fewer
+  if (n_threads <= 0) {
+    n_threads <- CPP_OPENMP_THREADS
+  }
+
   # Call C++ function with explicit type conversions
   result <- parallel_permutation_test_cpp(
     matrices_g1 = networks_g1,
     matrices_g2 = networks_g2,
     exclude_indices = as.integer(exclude_indices),
     n_permutations = n_permutations,
-    n_threads = as.integer(max(0L, n_threads)),
+    n_threads = as.integer(n_threads),
     seed = as.integer(seed)
   )
 
@@ -362,6 +394,11 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
                                         n_threads = 0, progress_callback = NULL) {
 
   n_candidates <- length(candidates_list)
+
+  # Use auto-detected thread count if n_threads is 0 or not specified
+  if (n_threads <= 0) {
+    n_threads <- CPP_OPENMP_THREADS
+  }
 
   if (CPP_BACKEND_AVAILABLE && n_candidates >= 1) {
     # Use C++ batch processing with chunked progress updates
