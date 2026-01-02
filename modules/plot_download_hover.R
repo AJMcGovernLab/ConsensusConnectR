@@ -191,21 +191,37 @@ hover_download_css <- function() {
     }
 
     /* Download button in modal */
-    .btn-execute-download {
-      background: linear-gradient(135deg, #27ae60, #2ecc71);
-      color: white;
-      border: none;
-      padding: 10px 24px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: 600;
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-      box-shadow: 0 2px 8px rgba(39, 174, 96, 0.3);
+    .btn-execute-download,
+    .plot-download-modal-footer .shiny-download-link {
+      background: linear-gradient(135deg, #27ae60, #2ecc71) !important;
+      color: white !important;
+      border: none !important;
+      padding: 10px 24px !important;
+      border-radius: 6px !important;
+      cursor: pointer !important;
+      font-weight: 600 !important;
+      transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+      box-shadow: 0 2px 8px rgba(39, 174, 96, 0.3) !important;
+      text-decoration: none !important;
+      display: inline-block !important;
+      pointer-events: auto !important;
     }
 
-    .btn-execute-download:hover {
+    .btn-execute-download:hover,
+    .plot-download-modal-footer .shiny-download-link:hover {
       transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4);
+      box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4) !important;
+      color: white !important;
+    }
+
+    /* Ensure modal footer buttons are clickable */
+    .plot-download-modal-footer {
+      position: relative;
+      z-index: 10;
+    }
+
+    .plot-download-modal-footer * {
+      pointer-events: auto;
     }
 
     /* Shiny selectInput and numericInput overrides for modal */
@@ -1923,66 +1939,69 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
 
   # Render plot preview in modal
-  # Shows scaled plot that maintains aspect ratio from user's dimension inputs
   output$hover_download_preview <- renderPlot({
     plot_id <- current_plot_id()
-    registry <- plot_registry()
 
-    message(sprintf("[Preview] Rendering preview for: %s (registry has %d plots)",
-                    if(is.null(plot_id)) "NULL" else plot_id, length(names(registry))))
+    # Force reactivity on analysis_results to ensure preview updates
+    # Access key reactive values to establish dependencies
+    regional_contrib <- analysis_results$regional_contribution
+    consensus <- analysis_results$comprehensive_consensus
 
-    # Get dimensions from inputs - these trigger reactivity
+    message(sprintf("[Preview] Rendering preview for: %s", if(is.null(plot_id)) "NULL" else plot_id))
+
+    # Get dimensions from inputs
     width_in <- as.numeric(input$hover_download_width %||% 10)
     height_in <- as.numeric(input$hover_download_height %||% 8)
 
     # Show placeholder if no plot selected
-    if(is.null(plot_id)) {
+    if(is.null(plot_id) || plot_id == "") {
       par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
            xlim = c(0, 1), ylim = c(0, 1))
-      text(0.5, 0.5, "Select a plot", col = "#6c757d", cex = 1.2)
+      text(0.5, 0.5, "Select a plot to preview", col = "#6c757d", cex = 1.0)
       return()
     }
 
-    # Check if plot exists in registry
+    # Get registry and check plot exists
+    registry <- plot_registry()
     if(!plot_id %in% names(registry)) {
       par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
-      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
-      text(0.5, 0.5, "Plot not in registry", col = "#dc3545", cex = 1.0)
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
+           xlim = c(0, 1), ylim = c(0, 1))
+      text(0.5, 0.5, paste("Plot not found:", plot_id), col = "#dc3545", cex = 0.8)
       return()
     }
 
     plot_info <- registry[[plot_id]]
 
     # Check if data is available
-    condition_met <- tryCatch(plot_info$condition(), error = function(e) FALSE)
+    condition_met <- tryCatch(plot_info$condition(), error = function(e) {
+      message(sprintf("[Preview] Condition check error: %s", e$message))
+      FALSE
+    })
 
     if(!condition_met) {
-      par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
-      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "")
-      text(0.5, 0.5, "Run analysis first", col = "#ffc107", cex = 1.0)
-      return()
-    }
-
-    # Render the plot with appropriate margins for preview
-    tryCatch({
-      # Use outer margin to show dimensions at the top
-      par(oma = c(0, 0, 1.2, 0), mar = c(3, 3, 2, 1), cex = 0.6, bg = "white")
-
-      # Call render
-      plot_info$render()
-
-      # Add dimensions in outer margin
-      mtext(sprintf("Output: %.1f\" x %.1f\"", width_in, height_in),
-            outer = TRUE, line = 0.1, cex = 0.8, font = 2, col = "#3498db")
-    }, error = function(e) {
-      # If rendering fails, show error
       par(mar = c(0, 0, 0, 0), bg = "#fff3cd")
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
            xlim = c(0, 1), ylim = c(0, 1))
-      text(0.5, 0.6, "Preview error", col = "#856404", cex = 0.9)
-      text(0.5, 0.4, sprintf("%.1f\" x %.1f\"", width_in, height_in),
-           col = "#333", cex = 0.8, font = 2)
+      text(0.5, 0.5, "Run analysis first", col = "#856404", cex = 1.0)
+      return()
+    }
+
+    # Render the plot preview
+    tryCatch({
+      par(oma = c(0, 0, 1.5, 0), mar = c(4, 4, 2, 2), cex = 0.7, bg = "white")
+      plot_info$render()
+      mtext(sprintf("Preview: %.1f\" x %.1f\" @ %s DPI",
+                    width_in, height_in, input$hover_download_dpi %||% "300"),
+            outer = TRUE, line = 0.2, cex = 0.9, font = 2, col = "#3498db")
+    }, error = function(e) {
+      message(sprintf("[Preview] Render error: %s", e$message))
+      par(mar = c(0, 0, 0, 0), bg = "#f8d7da")
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
+           xlim = c(0, 1), ylim = c(0, 1))
+      text(0.5, 0.6, "Error rendering preview", col = "#721c24", cex = 0.9)
+      text(0.5, 0.4, substr(e$message, 1, 50), col = "#721c24", cex = 0.7)
     })
 
   }, height = 250, bg = "white")
