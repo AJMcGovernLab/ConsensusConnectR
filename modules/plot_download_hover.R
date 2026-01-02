@@ -418,7 +418,7 @@ plot_download_modal_ui <- function() {
         div(
           class = "plot-preview-container",
           div(class = "plot-preview-label", "Preview"),
-          plotOutput("hover_download_preview", height = "250px")
+          plotOutput("hover_download_preview", height = "auto")
         ),
         # DPI Selection
         div(
@@ -1957,20 +1957,36 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     session$sendCustomMessage("plot_download_ready", list(plot_id = input$hover_download_plot_id))
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
 
+  # Reactive for preview height based on aspect ratio
+  preview_height <- reactive({
+    width_in <- as.numeric(input$hover_download_width %||% 10)
+    height_in <- as.numeric(input$hover_download_height %||% 8)
+
+    # Calculate preview height maintaining aspect ratio
+    # Preview container is ~450px wide, so calculate proportional height
+    preview_width <- 450
+    aspect_ratio <- height_in / width_in
+    calculated_height <- round(preview_width * aspect_ratio)
+
+    # Clamp between reasonable bounds
+    max(150, min(400, calculated_height))
+  })
+
   # Render plot preview in modal
   output$hover_download_preview <- renderPlot({
     plot_id <- current_plot_id()
 
+    # Force reactivity on dimension inputs
+    width_in <- as.numeric(input$hover_download_width %||% 10)
+    height_in <- as.numeric(input$hover_download_height %||% 8)
+    dpi <- input$hover_download_dpi %||% "300"
+
     # Force reactivity on analysis_results to ensure preview updates
-    # Access key reactive values to establish dependencies
     regional_contrib <- analysis_results$regional_contribution
     consensus <- analysis_results$comprehensive_consensus
 
-    message(sprintf("[Preview] Rendering preview for: %s", if(is.null(plot_id)) "NULL" else plot_id))
-
-    # Get dimensions from inputs
-    width_in <- as.numeric(input$hover_download_width %||% 10)
-    height_in <- as.numeric(input$hover_download_height %||% 8)
+    message(sprintf("[Preview] Rendering for: %s (%.1f x %.1f)",
+                    if(is.null(plot_id)) "NULL" else plot_id, width_in, height_in))
 
     # Show placeholder if no plot selected
     if(is.null(plot_id) || plot_id == "") {
@@ -2011,8 +2027,7 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     tryCatch({
       par(oma = c(0, 0, 1.5, 0), mar = c(4, 4, 2, 2), cex = 0.7, bg = "white")
       plot_info$render()
-      mtext(sprintf("Preview: %.1f\" x %.1f\" @ %s DPI",
-                    width_in, height_in, input$hover_download_dpi %||% "300"),
+      mtext(sprintf("Preview: %.1f\" x %.1f\" @ %s DPI", width_in, height_in, dpi),
             outer = TRUE, line = 0.2, cex = 0.9, font = 2, col = "#3498db")
     }, error = function(e) {
       message(sprintf("[Preview] Render error: %s", e$message))
@@ -2023,7 +2038,7 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
       text(0.5, 0.4, substr(e$message, 1, 50), col = "#721c24", cex = 0.7)
     })
 
-  }, height = 250, bg = "white")
+  }, height = function() { preview_height() }, bg = "white")
 
   # Ensure preview renders even when modal is hidden
   outputOptions(output, "hover_download_preview", suspendWhenHidden = FALSE)
