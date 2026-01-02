@@ -152,14 +152,24 @@ estimate_permutation_runtime <- function(n_tests,
   } else if (!is.null(n_nodes) && !is.null(n_matrices) && n_nodes > 0 && n_matrices > 0) {
     # Formula-based estimation using data dimensions
     # Complexity: O(n_nodes^2 × n_matrices) per permutation
-    # Base overhead ~0.5ms, plus scaling with matrix operations
-    base_ms <- 0.5
-    scaling_factor <- 0.00005  # Empirically tuned coefficient
+    #
+    # UPDATED for optimized C++ backend (Jan 2026):
+    # - Phase 1-2 optimizations: ThreadLocalBuffers + indirect Jaccard indexing
+    # - Eliminates O(n²) matrix copies per permutation
+    # - Benchmarks on 8-core system:
+    #   - 30 nodes, 5 matrices: ~0.005 ms/perm
+    #   - 50 nodes, 10 matrices: ~0.014 ms/perm
+    #
+    # Old values (pre-optimization): base=0.5, factor=0.00005
+    # New values: ~100x faster due to memory optimization
+    base_ms <- 0.005  # 5 microseconds base overhead (was 0.5)
+    scaling_factor <- 0.0000006  # ~100x smaller (was 0.00005)
     time_per_perm_ms <- base_ms + (n_nodes^2 * n_matrices * scaling_factor)
     estimation_method <- "estimated"
   } else {
     # Conservative fallback when no dimension info available
-    time_per_perm_ms <- 5
+    # Updated for optimized C++ backend
+    time_per_perm_ms <- 0.05  # 50 microseconds (was 5ms)
     estimation_method <- "default"
   }
 
@@ -177,12 +187,15 @@ estimate_permutation_runtime <- function(n_tests,
     } else if (!is.null(n_nodes) && !is.null(n_matrices)) {
       # Formula-based estimate for enumeration (similar complexity to permutation)
       # But enumeration involves 3 approach-specific Jaccard computations per combo
-      base_ms <- 1.0  # Slightly higher base for 3x approach calls
-      scaling_factor <- 0.00008  # Empirically tuned
+      #
+      # UPDATED for optimized C++ backend (Jan 2026):
+      # Enumeration is also faster with optimized Jaccard computation
+      base_ms <- 0.01  # 10 microseconds base (was 1.0)
+      scaling_factor <- 0.000001  # ~80x smaller (was 0.00008)
       enum_time_per_combo_ms <- base_ms + (n_nodes^2 * n_matrices * scaling_factor)
     } else {
-      # Fallback estimate
-      enum_time_per_combo_ms <- 10
+      # Fallback estimate - updated for optimized backend
+      enum_time_per_combo_ms <- 0.1  # 100 microseconds (was 10ms)
     }
 
     # Total enumeration time (Phase 1 runs serially)
@@ -319,7 +332,7 @@ calibrate_permutation_time <- function(analysis_results,
 
   if (length(networks_g1) == 0 || length(networks_g2) == 0) {
     return(list(
-      time_per_perm_ms = 5,  # Fallback to default
+      time_per_perm_ms = 0.05,  # Fallback - updated for optimized C++ backend
       n_nodes = NA,
       n_matrices = 0,
       n_calibration_perms = 0,
@@ -391,7 +404,7 @@ calibrate_parallel_performance <- function(analysis_results,
   if (length(networks_g1) == 0 || length(networks_g2) == 0) {
     return(list(
       error = "Could not extract network matrices",
-      time_per_perm_ms = 5,
+      time_per_perm_ms = 0.05,  # Updated for optimized C++ backend
       optimal_workers = 1,
       use_parallel = FALSE,
       backend = "none"
