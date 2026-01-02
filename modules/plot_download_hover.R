@@ -951,7 +951,8 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
           analysis_results$method_percolation_results,
           ui_state$brain_areas,
           ui_state$area_colors,
-          get_group_colors()
+          get_group_colors(),
+          selected_methods = input$selected_correlation_methods
         )
       }
     ),
@@ -987,7 +988,8 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
           analysis_results$comprehensive_consensus,
           ui_state$brain_areas,
           ui_state$area_colors,
-          get_group_colors()
+          get_group_colors(),
+          selected_methods = input$selected_correlation_methods
         )
       }
     ),
@@ -999,7 +1001,8 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
           analysis_results$comprehensive_consensus,
           ui_state$brain_areas,
           ui_state$area_colors,
-          get_group_colors()
+          get_group_colors(),
+          selected_methods = input$selected_correlation_methods
         )
       }
     ),

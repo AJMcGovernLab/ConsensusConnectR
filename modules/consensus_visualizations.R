@@ -413,7 +413,8 @@ render_consensus_node_metrics_plot <- function(comprehensive_consensus,
                                                method_percolation_results,
                                                brain_areas = NULL,
                                                area_colors = NULL,
-                                               group_colors = NULL) {
+                                               group_colors = NULL,
+                                               selected_methods = NULL) {
 
   all_groups <- names(comprehensive_consensus)
   if(length(all_groups) == 0) {
@@ -425,7 +426,12 @@ render_consensus_node_metrics_plot <- function(comprehensive_consensus,
   n_groups <- length(all_groups)
   par(mfrow = c(2, 2), mar = c(5, 5, 4, 2))
 
-  methods <- filter_common_methods(comprehensive_consensus)
+  # Use provided selected_methods or fall back to default
+  if(is.null(selected_methods)) {
+    methods <- filter_common_methods(comprehensive_consensus)
+  } else {
+    methods <- filter_common_methods(comprehensive_consensus, selected_methods)
+  }
 
   if(length(methods) == 0) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -550,7 +556,8 @@ render_consensus_node_metrics_plot <- function(comprehensive_consensus,
 render_consensus_regional_plot <- function(comprehensive_consensus,
                                            brain_areas,
                                            area_colors = NULL,
-                                           group_colors = NULL) {
+                                           group_colors = NULL,
+                                           selected_methods = NULL) {
 
   all_groups <- names(comprehensive_consensus)
   if(length(all_groups) == 0 || is.null(brain_areas)) {
@@ -559,7 +566,11 @@ render_consensus_regional_plot <- function(comprehensive_consensus,
     return()
   }
 
-  methods <- filter_common_methods(comprehensive_consensus)
+  if(is.null(selected_methods)) {
+    methods <- filter_common_methods(comprehensive_consensus)
+  } else {
+    methods <- filter_common_methods(comprehensive_consensus, selected_methods)
+  }
 
   if(length(methods) == 0) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -680,7 +691,8 @@ render_consensus_regional_plot <- function(comprehensive_consensus,
 render_consensus_subregional_plot <- function(comprehensive_consensus,
                                               brain_areas,
                                               area_colors = NULL,
-                                              group_colors = NULL) {
+                                              group_colors = NULL,
+                                              selected_methods = NULL) {
 
   all_groups <- names(comprehensive_consensus)
   if(length(all_groups) == 0 || is.null(brain_areas)) {
@@ -689,7 +701,11 @@ render_consensus_subregional_plot <- function(comprehensive_consensus,
     return()
   }
 
-  methods <- filter_common_methods(comprehensive_consensus)
+  if(is.null(selected_methods)) {
+    methods <- filter_common_methods(comprehensive_consensus)
+  } else {
+    methods <- filter_common_methods(comprehensive_consensus, selected_methods)
+  }
 
   if(length(methods) == 0) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
