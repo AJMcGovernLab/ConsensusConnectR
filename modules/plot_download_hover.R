@@ -414,11 +414,11 @@ plot_download_modal_ui <- function() {
       # Body - Form inputs
       div(
         class = "plot-download-modal-body",
-        # Plot Preview - height is dynamic based on aspect ratio
+        # Plot Preview - renders at actual dimensions, scaled to fit
         div(
           class = "plot-preview-container",
-          div(class = "plot-preview-label", "Preview"),
-          plotOutput("hover_download_preview", height = "auto")
+          div(class = "plot-preview-label", "Preview (actual render)"),
+          imageOutput("hover_download_preview", height = "auto")
         ),
         # DPI Selection
         div(
@@ -1972,91 +1972,84 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     max(150, min(400, calculated_height))
   })
 
-  # Render plot preview in modal
-  output$hover_download_preview <- renderPlot({
+  # Render plot preview in modal - renders to temp file at actual dimensions then displays
+  output$hover_download_preview <- renderImage({
     plot_id <- current_plot_id()
 
     # Force reactivity on dimension inputs
     width_in <- as.numeric(input$hover_download_width %||% 10)
     height_in <- as.numeric(input$hover_download_height %||% 8)
-    dpi <- input$hover_download_dpi %||% "300"
+    dpi <- as.numeric(input$hover_download_dpi %||% 300)
 
-    # Force reactivity on analysis_results to ensure preview updates
+    # Force reactivity on analysis_results
     regional_contrib <- analysis_results$regional_contribution
     consensus <- analysis_results$comprehensive_consensus
 
-    message(sprintf("[Preview] Rendering for: %s (%.1f x %.1f)",
-                    if(is.null(plot_id)) "NULL" else plot_id, width_in, height_in))
+    message(sprintf("[Preview] Rendering for: %s (%.1f x %.1f @ %d DPI)",
+                    if(is.null(plot_id)) "NULL" else plot_id, width_in, height_in, dpi))
+
+    # Create temp file for preview
+    temp_file <- tempfile(fileext = ".png")
+
+    # Helper to create placeholder image
+    create_placeholder <- function(msg, bg_col = "#f8f9fa", text_col = "#6c757d") {
+      png(temp_file, width = 450, height = preview_height(), bg = bg_col)
+      par(mar = c(0, 0, 0, 0))
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
+           xlim = c(0, 1), ylim = c(0, 1))
+      text(0.5, 0.5, msg, col = text_col, cex = 1.0)
+      dev.off()
+    }
 
     # Show placeholder if no plot selected
     if(is.null(plot_id) || plot_id == "") {
-      par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
-      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
-           xlim = c(0, 1), ylim = c(0, 1))
-      text(0.5, 0.5, "Select a plot to preview", col = "#6c757d", cex = 1.0)
-      return()
+      create_placeholder("Select a plot to preview")
+      return(list(src = temp_file, contentType = "image/png",
+                  width = 450, height = preview_height(),
+                  alt = "No plot selected"))
     }
 
     # Get registry and check plot exists
     registry <- plot_registry()
     if(!plot_id %in% names(registry)) {
-      par(mar = c(0, 0, 0, 0), bg = "#f8f9fa")
-      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
-           xlim = c(0, 1), ylim = c(0, 1))
-      text(0.5, 0.5, paste("Plot not found:", plot_id), col = "#dc3545", cex = 0.8)
-      return()
+      create_placeholder(paste("Plot not found:", plot_id), "#f8d7da", "#dc3545")
+      return(list(src = temp_file, contentType = "image/png",
+                  width = 450, height = preview_height(),
+                  alt = "Plot not found"))
     }
 
     plot_info <- registry[[plot_id]]
 
     # Check if data is available
-    condition_met <- tryCatch(plot_info$condition(), error = function(e) {
-      message(sprintf("[Preview] Condition check error: %s", e$message))
-      FALSE
-    })
-
+    condition_met <- tryCatch(plot_info$condition(), error = function(e) FALSE)
     if(!condition_met) {
-      par(mar = c(0, 0, 0, 0), bg = "#fff3cd")
-      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
-           xlim = c(0, 1), ylim = c(0, 1))
-      text(0.5, 0.5, "Run analysis first", col = "#856404", cex = 1.0)
-      return()
+      create_placeholder("Run analysis first", "#fff3cd", "#856404")
+      return(list(src = temp_file, contentType = "image/png",
+                  width = 450, height = preview_height(),
+                  alt = "Analysis required"))
     }
 
-    # Render the plot preview
-    # Calculate dynamic margins based on aspect ratio to prevent "margins too large" errors
-    aspect_ratio <- height_in / width_in
-    # Scale margins - reduce when aspect ratio is extreme
-    margin_scale <- min(1, aspect_ratio * 1.2, (1/aspect_ratio) * 1.2)
-    margin_scale <- max(0.3, margin_scale)  # Don't go too small
-
-    base_mar <- c(4, 4, 2, 2)
-    scaled_mar <- base_mar * margin_scale
-    cex_scale <- max(0.5, min(1, margin_scale * 1.2))
-
+    # Render at actual dimensions to temp file (use lower DPI for preview speed)
+    preview_dpi <- min(100, dpi)  # Cap preview DPI for performance
     tryCatch({
-      par(oma = c(0, 0, 1.2, 0), mar = scaled_mar, cex = 0.7 * cex_scale, bg = "white")
+      png(temp_file, width = width_in * preview_dpi, height = height_in * preview_dpi, res = preview_dpi)
       plot_info$render()
-      mtext(sprintf("Preview: %.1f\" x %.1f\" @ %s DPI", width_in, height_in, dpi),
-            outer = TRUE, line = 0.1, cex = 0.8 * cex_scale, font = 2, col = "#3498db")
+      dev.off()
     }, error = function(e) {
       message(sprintf("[Preview] Render error: %s", e$message))
-      # Try again with minimal margins
-      tryCatch({
-        par(oma = c(0, 0, 0, 0), mar = c(2, 2, 1, 1), cex = 0.5, bg = "white")
-        plot_info$render()
-        mtext(sprintf("%.1f\" x %.1f\"", width_in, height_in),
-              side = 3, line = -1, cex = 0.6, col = "#3498db")
-      }, error = function(e2) {
-        par(mar = c(0, 0, 0, 0), bg = "#f8d7da")
-        plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
-             xlim = c(0, 1), ylim = c(0, 1))
-        text(0.5, 0.6, "Preview unavailable", col = "#721c24", cex = 0.9)
-        text(0.5, 0.4, "Download will render correctly", col = "#856404", cex = 0.7)
-      })
+      tryCatch(dev.off(), error = function(x) {})
+      create_placeholder("Preview error\nDownload will work", "#f8d7da", "#721c24")
     })
 
-  }, height = function() { preview_height() }, bg = "white")
+    # Return scaled image maintaining aspect ratio
+    list(
+      src = temp_file,
+      contentType = "image/png",
+      width = 450,
+      height = preview_height(),
+      alt = sprintf("Preview: %.1f x %.1f inches", width_in, height_in)
+    )
+  }, deleteFile = TRUE)
 
   # Ensure preview renders even when modal is hidden
   outputOptions(output, "hover_download_preview", suspendWhenHidden = FALSE)
