@@ -327,6 +327,11 @@ hover_download_js <- function() {
     Shiny.addCustomMessageHandler('plot_download_error', function(message) {
       alert('Download Error: ' + message.error);
     });
+
+    // Custom message handler for confirming plot is ready
+    Shiny.addCustomMessageHandler('plot_download_ready', function(message) {
+      console.log('[Plot Download] Ready to render: ' + message.plot_id);
+    });
   "))
 }
 
@@ -379,7 +384,7 @@ plot_download_modal_ui <- function() {
         div(
           class = "plot-preview-container",
           div(class = "plot-preview-label", "Preview"),
-          plotOutput("hover_download_preview", height = "auto")
+          plotOutput("hover_download_preview", height = "250px")
         ),
         # DPI Selection
         div(
@@ -1909,15 +1914,22 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
 
   # Update current plot when modal opens
   observeEvent(input$hover_download_plot_id, {
+    req(input$hover_download_plot_id)
     message(sprintf("[Plot Download] Modal opened for plot: %s", input$hover_download_plot_id))
     current_plot_id(input$hover_download_plot_id)
-  })
+
+    # Force preview update by invalidating
+    session$sendCustomMessage("plot_download_ready", list(plot_id = input$hover_download_plot_id))
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
 
   # Render plot preview in modal
   # Shows scaled plot that maintains aspect ratio from user's dimension inputs
   output$hover_download_preview <- renderPlot({
     plot_id <- current_plot_id()
     registry <- plot_registry()
+
+    message(sprintf("[Preview] Rendering preview for: %s (registry has %d plots)",
+                    if(is.null(plot_id)) "NULL" else plot_id, length(names(registry))))
 
     # Get dimensions from inputs - these trigger reactivity
     width_in <- as.numeric(input$hover_download_width %||% 10)
@@ -1973,17 +1985,7 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
            col = "#333", cex = 0.8, font = 2)
     })
 
-  }, height = function() {
-    # Calculate height based on aspect ratio
-    # Base width is ~400px (modal content area), scale height proportionally
-    width_in <- as.numeric(input$hover_download_width %||% 10)
-    height_in <- as.numeric(input$hover_download_height %||% 8)
-    base_width <- 400
-    aspect_ratio <- height_in / width_in
-    # Calculate height, with min 100 and max 300 to keep preview reasonable
-    preview_height <- round(base_width * aspect_ratio)
-    max(100, min(300, preview_height))
-  }, bg = "white")
+  }, height = 250, bg = "white")
 
   # Download handler
   output$execute_hover_download <- downloadHandler(
