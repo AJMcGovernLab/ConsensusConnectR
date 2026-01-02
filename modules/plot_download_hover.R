@@ -192,7 +192,9 @@ hover_download_css <- function() {
 
     /* Download button in modal */
     .btn-execute-download,
-    .plot-download-modal-footer .shiny-download-link {
+    .plot-download-modal-footer .shiny-download-link,
+    .plot-download-modal-footer .btn,
+    #execute_hover_download {
       background: linear-gradient(135deg, #27ae60, #2ecc71) !important;
       color: white !important;
       border: none !important;
@@ -205,13 +207,17 @@ hover_download_css <- function() {
       text-decoration: none !important;
       display: inline-block !important;
       pointer-events: auto !important;
+      position: relative !important;
+      z-index: 100 !important;
     }
 
     .btn-execute-download:hover,
-    .plot-download-modal-footer .shiny-download-link:hover {
+    .plot-download-modal-footer .shiny-download-link:hover,
+    #execute_hover_download:hover {
       transform: translateY(-1px);
       box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4) !important;
       color: white !important;
+      background: linear-gradient(135deg, #219a52, #27ae60) !important;
     }
 
     /* Ensure modal footer buttons are clickable */
@@ -291,6 +297,7 @@ hover_download_js <- function() {
     // Open download modal
     function openPlotDownloadModal(plotId) {
       currentDownloadPlotId = plotId;
+      console.log('[Plot Download] Opening modal for: ' + plotId);
       var modal = document.getElementById('plot-download-modal');
       if (modal) {
         modal.style.display = 'block';
@@ -305,8 +312,18 @@ hover_download_js <- function() {
             .trim();
           plotNameEl.innerText = displayName;
         }
-        // Send plot ID to Shiny
+        // Send plot ID to Shiny with event priority
         Shiny.setInputValue('hover_download_plot_id', plotId, {priority: 'event'});
+
+        // Force a resize event after a short delay to help render hidden elements
+        setTimeout(function() {
+          window.dispatchEvent(new Event('resize'));
+          // Also trigger Shiny binding refresh
+          if (typeof Shiny !== 'undefined' && Shiny.bindAll) {
+            Shiny.bindAll(modal);
+          }
+          console.log('[Plot Download] Modal initialized');
+        }, 100);
       }
     }
 
@@ -348,6 +365,7 @@ hover_download_js <- function() {
     Shiny.addCustomMessageHandler('plot_download_ready', function(message) {
       console.log('[Plot Download] Ready to render: ' + message.plot_id);
     });
+
   "))
 }
 
@@ -470,6 +488,7 @@ plot_download_modal_ui <- function() {
           onclick = "closePlotDownloadModal()",
           "Cancel"
         ),
+        # Direct download button - simplest approach
         downloadButton(
           "execute_hover_download",
           "Download",
@@ -2005,6 +2024,9 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     })
 
   }, height = 250, bg = "white")
+
+  # Ensure preview renders even when modal is hidden
+  outputOptions(output, "hover_download_preview", suspendWhenHidden = FALSE)
 
   # Download handler
   output$execute_hover_download <- downloadHandler(
