@@ -25,11 +25,46 @@ CPP_OPENMP_THREADS <- 1
 #' @param verbose Print status messages
 #' @return TRUE if successful, FALSE otherwise
 #' @export
-initialize_cpp_backend <- function(verbose = TRUE) {
-  # Check if already initialized
-  if (CPP_BACKEND_AVAILABLE) {
+initialize_cpp_backend <- function(verbose = TRUE, force_rebuild = FALSE) {
+  # Find the C++ source file first (needed for modification check)
+  cpp_file <- file.path(dirname(getwd()), "src", "permutation_core.cpp")
+  if (!file.exists(cpp_file)) {
+    cpp_file <- file.path(getwd(), "src", "permutation_core.cpp")
+  }
+  if (!file.exists(cpp_file)) {
+    cpp_file <- "src/permutation_core.cpp"
+  }
+
+  # Check if source has been modified since last compilation
+  # This ensures changes to the C++ code are picked up automatically
+  needs_rebuild <- force_rebuild
+  if (!needs_rebuild && file.exists(cpp_file)) {
+    cpp_mtime <- file.mtime(cpp_file)
+    # Check Rcpp's cache directory for compiled object
+    cache_dir <- file.path(tempdir(), "sourceCpp-x86_64-pc-linux-gnu-1.0.14")
+    if (!dir.exists(cache_dir)) {
+      cache_dir <- file.path(tempdir())  # Fallback
+    }
+    cached_files <- list.files(cache_dir, pattern = "permutation_core.*\\.(so|dll|o)$",
+                               full.names = TRUE, recursive = TRUE)
+    if (length(cached_files) > 0) {
+      cache_mtime <- max(file.mtime(cached_files))
+      if (cpp_mtime > cache_mtime) {
+        needs_rebuild <- TRUE
+        if (verbose) message("[CPP Backend] Source modified since last build, recompiling...")
+      }
+    }
+  }
+
+  # Check if already initialized AND no rebuild needed
+  if (CPP_BACKEND_AVAILABLE && !needs_rebuild) {
     if (verbose) message("[CPP Backend] Already initialized with ", CPP_OPENMP_THREADS, " OpenMP threads")
     return(TRUE)
+  }
+
+  # If rebuild needed, reset state
+  if (needs_rebuild) {
+    CPP_BACKEND_AVAILABLE <<- FALSE
   }
 
   # Check for required packages
@@ -59,17 +94,7 @@ initialize_cpp_backend <- function(verbose = TRUE) {
     }
   }
 
-  # Try to compile the C++ code
-  cpp_file <- file.path(dirname(getwd()), "src", "permutation_core.cpp")
-  if (!file.exists(cpp_file)) {
-    # Try alternate path (running from app.R directory)
-    cpp_file <- file.path(getwd(), "src", "permutation_core.cpp")
-  }
-  if (!file.exists(cpp_file)) {
-    # Try one more path
-    cpp_file <- "src/permutation_core.cpp"
-  }
-
+  # Check if C++ source file exists (cpp_file path already determined at top of function)
   if (!file.exists(cpp_file)) {
     CPP_BACKEND_ERROR <<- paste("C++ source file not found. Tried:", cpp_file)
     if (verbose) message("[CPP Backend] ", CPP_BACKEND_ERROR)
@@ -80,7 +105,7 @@ initialize_cpp_backend <- function(verbose = TRUE) {
 
   tryCatch({
     # Compile and load the C++ code
-    Rcpp::sourceCpp(cpp_file, verbose = FALSE, rebuild = FALSE)
+    Rcpp::sourceCpp(cpp_file, verbose = FALSE, rebuild = needs_rebuild)
 
     # Test compilation
     test_result <- test_cpp_compilation()
