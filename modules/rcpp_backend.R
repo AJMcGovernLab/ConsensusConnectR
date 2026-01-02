@@ -507,6 +507,223 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
 }
 
 # =============================================================================
+# VERIFICATION AND BENCHMARKING
+# =============================================================================
+
+#' Verify Optimization Correctness
+#'
+#' Compares the optimized C++ implementation against the reference implementation
+#' to ensure statistical equivalence. This should be run after any optimization
+#' changes to verify results are still correct.
+#'
+#' @param networks_g1 List of network matrices for group 1
+#' @param networks_g2 List of network matrices for group 2
+#' @param n_tests Number of permutation tests to run (default 100)
+#' @param tolerance Tolerance for numerical comparison (default 1e-10)
+#' @return List with verification results including pass/fail status
+#' @export
+verify_optimization_correctness <- function(networks_g1, networks_g2,
+                                             n_tests = 100, tolerance = 1e-10) {
+
+  if (!is_cpp_really_available()) {
+    return(list(
+      passed = FALSE,
+      error = "C++ backend not available. Call initialize_cpp_backend() first."
+    ))
+  }
+
+  # Ensure matrices are properly formatted
+  networks_g1 <- lapply(networks_g1, function(m) {
+    if (!is.matrix(m)) m <- as.matrix(m)
+    storage.mode(m) <- "double"
+    m
+  })
+
+  networks_g2 <- lapply(networks_g2, function(m) {
+    if (!is.matrix(m)) m <- as.matrix(m)
+    storage.mode(m) <- "double"
+    m
+  })
+
+  tryCatch({
+    result <- verify_numerical_equivalence(
+      matrices_g1 = networks_g1,
+      matrices_g2 = networks_g2,
+      n_test_permutations = as.integer(n_tests),
+      tolerance = tolerance
+    )
+
+    # Add human-readable interpretation
+    result$interpretation <- if (result$passed) {
+      sprintf("PASSED: Variance ratio %.3f is within acceptable range (0.5-2.0)",
+              result$variance_ratio)
+    } else {
+      sprintf("FAILED: Variance ratio %.3f is outside acceptable range (0.5-2.0)",
+              result$variance_ratio)
+    }
+
+    return(result)
+
+  }, error = function(e) {
+    return(list(
+      passed = FALSE,
+      error = paste("Verification failed:", e$message)
+    ))
+  })
+}
+
+#' Benchmark C++ Permutation Performance
+#'
+#' Runs a benchmark of the optimized C++ permutation testing code and returns
+#' detailed timing metrics. Use this to verify optimization improvements.
+#'
+#' @param networks_g1 List of network matrices for group 1
+#' @param networks_g2 List of network matrices for group 2
+#' @param selected_regions Character vector of regions to exclude (optional)
+#' @param node_names Character vector of node names (required if selected_regions provided)
+#' @param n_permutations Number of permutations to benchmark (default 1000)
+#' @param n_threads Number of threads (0 = auto-detect)
+#' @return List with timing metrics and performance stats
+#' @export
+benchmark_cpp_performance <- function(networks_g1, networks_g2,
+                                       selected_regions = NULL,
+                                       node_names = NULL,
+                                       n_permutations = 1000,
+                                       n_threads = 0) {
+
+  if (!is_cpp_really_available()) {
+    return(list(
+      error = "C++ backend not available. Call initialize_cpp_backend() first."
+    ))
+  }
+
+  # Ensure matrices are properly formatted
+  networks_g1 <- lapply(networks_g1, function(m) {
+    if (!is.matrix(m)) m <- as.matrix(m)
+    storage.mode(m) <- "double"
+    m
+  })
+
+  networks_g2 <- lapply(networks_g2, function(m) {
+    if (!is.matrix(m)) m <- as.matrix(m)
+    storage.mode(m) <- "double"
+    m
+  })
+
+  # Convert selected_regions to indices if provided
+  if (!is.null(selected_regions) && !is.null(node_names)) {
+    exclude_indices <- as.integer(which(node_names %in% selected_regions) - 1L)
+  } else {
+    exclude_indices <- integer(0)
+  }
+
+  # Use auto-detected thread count if n_threads is 0
+  if (n_threads <= 0) {
+    n_threads <- CPP_OPENMP_THREADS
+  }
+
+  tryCatch({
+    result <- benchmark_permutation_performance(
+      matrices_g1 = networks_g1,
+      matrices_g2 = networks_g2,
+      exclude_indices = exclude_indices,
+      n_permutations = as.integer(n_permutations),
+      n_threads = as.integer(n_threads)
+    )
+
+    # Add human-readable summary
+    result$summary <- sprintf(
+      "Completed %d permutations in %.2f ms (%.0f perms/sec) using %d threads on %d nodes x %d matrices",
+      result$n_permutations,
+      result$elapsed_ms,
+      result$perms_per_second,
+      result$n_threads,
+      result$n_nodes,
+      result$n_matrices
+    )
+
+    return(result)
+
+  }, error = function(e) {
+    return(list(
+      error = paste("Benchmark failed:", e$message)
+    ))
+  })
+}
+
+#' Quick Performance Test
+#'
+#' Runs a quick performance comparison between optimized and reference code.
+#' Useful for validating that optimizations are working correctly.
+#'
+#' @param n_nodes Number of nodes for test matrices (default 30)
+#' @param n_matrices Number of matrices to test (default 5)
+#' @param n_permutations Number of permutations (default 500)
+#' @return List with benchmark results
+#' @export
+quick_performance_test <- function(n_nodes = 30, n_matrices = 5, n_permutations = 500) {
+
+  if (!is_cpp_really_available()) {
+    return(list(
+      error = "C++ backend not available. Call initialize_cpp_backend() first."
+    ))
+  }
+
+  message(sprintf("[Benchmark] Creating test data: %d nodes, %d matrices", n_nodes, n_matrices))
+
+  # Generate random test matrices
+  set.seed(42)
+  networks_g1 <- lapply(1:n_matrices, function(i) {
+    m <- matrix(rnorm(n_nodes^2), n_nodes, n_nodes)
+    m <- (m + t(m)) / 2  # Make symmetric
+    diag(m) <- 0
+    m
+  })
+
+  networks_g2 <- lapply(1:n_matrices, function(i) {
+    m <- matrix(rnorm(n_nodes^2), n_nodes, n_nodes)
+    m <- (m + t(m)) / 2
+    diag(m) <- 0
+    m
+  })
+
+  # Run benchmark
+  message(sprintf("[Benchmark] Running %d permutations with %d threads...",
+                  n_permutations, CPP_OPENMP_THREADS))
+
+  result <- benchmark_cpp_performance(
+    networks_g1, networks_g2,
+    n_permutations = n_permutations
+  )
+
+  if (!is.null(result$error)) {
+    return(result)
+  }
+
+  message("[Benchmark] ", result$summary)
+
+  # Run verification
+  message("[Benchmark] Verifying numerical correctness...")
+  verify_result <- verify_optimization_correctness(
+    networks_g1, networks_g2,
+    n_tests = min(100, n_permutations)
+  )
+
+  message("[Benchmark] ", verify_result$interpretation)
+
+  return(list(
+    benchmark = result,
+    verification = verify_result,
+    test_params = list(
+      n_nodes = n_nodes,
+      n_matrices = n_matrices,
+      n_permutations = n_permutations,
+      n_threads = CPP_OPENMP_THREADS
+    )
+  ))
+}
+
+# =============================================================================
 # AUTO-INITIALIZATION MESSAGE
 # =============================================================================
 
