@@ -205,26 +205,52 @@ estimate_permutation_runtime <- function(n_tests,
   # Total permutation operations (Phase 4-5)
   total_ops <- n_tests * n_permutations
 
-  # Handle C++ backend specially - time_per_perm_ms is ALREADY parallelized
+  # Handle C++ backend specially
   if (using_cpp_backend) {
-    # C++ OpenMP: time_per_perm_ms already includes parallelization
-    # No R process spawn overhead, no serialization overhead
-    # Just multiply total operations by the already-parallel time
+    # CRITICAL FIX: C++ batch mode parallelizes CANDIDATES, not permutations
+    # - batch_permutation_test_cpp: each thread processes multiple candidates sequentially
+    # - Within each candidate, n_permutations run SERIALLY on that thread
+    # - Time = ceil(n_candidates / n_threads) × n_perms × serial_time_per_perm
 
-    # For batch processing, there's small overhead per batch (~10 batches for progress updates)
+    n_threads <- calibration$cpp_threads
+    if (is.null(n_threads) || n_threads <= 0) n_threads <- 1
+
+    # Get serial time per permutation (for batch mode)
+    # This is the time for ONE permutation running serially (not parallelized)
+    serial_perm_time_ms <- calibration$cpp_serial_time_per_perm_ms
+    if (is.null(serial_perm_time_ms) || !is.finite(serial_perm_time_ms)) {
+      # Fallback: estimate from parallel time × threads
+      serial_perm_time_ms <- time_per_perm_ms * n_threads * 0.85
+    }
+
+    # For batch mode: candidates are distributed across threads
+    candidates_per_thread <- ceiling(n_tests / n_threads)
+
+    # Each thread processes its candidates serially
+    # For each candidate: observed computation + n_permutations × serial_time
+    # The observed computation is ~1 permutation worth of work
+    time_per_candidate_ms <- (n_permutations + 1) * serial_perm_time_ms
+
+    # Total batch time = max candidates per thread × time per candidate
+    batch_compute_ms <- candidates_per_thread * time_per_candidate_ms
+
+    # Small overhead per batch call (~10 batches for progress updates)
     n_batches <- ceiling(n_tests / max(1, ceiling(n_tests / 10)))
-    batch_overhead_ms <- n_batches * 5  # ~5ms overhead per C++ call
+    batch_overhead_ms <- n_batches * 10  # ~10ms overhead per C++ call
 
-    perm_time_ms <- total_ops * time_per_perm_ms + batch_overhead_ms
+    perm_time_ms <- batch_compute_ms + batch_overhead_ms
     time_ms <- enum_time_ms + perm_time_ms  # Include enumeration (Phase 1)
-    serial_compute_ms <- time_ms  # For C++, "serial" time IS the parallel time (already optimized)
+    serial_compute_ms <- total_ops * serial_perm_time_ms  # True serial time
     parallel_beneficial <- TRUE  # C++ is always beneficial
     overhead_breakdown <- list(
       enum_ms = enum_time_ms,
       spawn_ms = 0,
       serialization_ms = 0,
       batch_overhead_ms = batch_overhead_ms,
-      compute_ms = total_ops * time_per_perm_ms
+      compute_ms = batch_compute_ms,
+      candidates_per_thread = candidates_per_thread,
+      n_threads = n_threads,
+      serial_perm_time_ms = serial_perm_time_ms
     )
 
   } else if (n_workers > 1) {
@@ -446,7 +472,18 @@ calibrate_parallel_performance <- function(analysis_results,
     # Pick a random region to test with
     test_region <- sample(node_names, 1)
 
-    # Time C++ execution
+    # CRITICAL FIX: Ensure enough permutations for accurate measurement
+    # With many threads (e.g., 192), small n_calibration_perms measures overhead, not computation
+    # Minimum: n_threads * 10 permutations so each thread gets meaningful work
+    # For batch mode (which parallelizes CANDIDATES), we also measure serial time
+    effective_calibration_perms <- max(n_calibration_perms, cpp_threads * 10, 500)
+
+    if (verbose && effective_calibration_perms > n_calibration_perms) {
+      message("  Scaling calibration perms from ", n_calibration_perms, " to ",
+              effective_calibration_perms, " for ", cpp_threads, " threads")
+    }
+
+    # Time C++ execution with enough permutations
     start_cpp <- Sys.time()
     tryCatch({
       cpp_result <- test_combined_contribution_fast(
@@ -454,32 +491,54 @@ calibrate_parallel_performance <- function(analysis_results,
         networks_g2 = networks_g2,
         node_names = node_names,
         selected_regions = test_region,
-        n_permutations = n_calibration_perms,
+        n_permutations = effective_calibration_perms,
         n_threads = 0,  # Auto-detect
         seed = 42
       )
       cpp_elapsed_ms <- as.numeric(difftime(Sys.time(), start_cpp, units = "secs")) * 1000
-      cpp_time_per_perm <- cpp_elapsed_ms / n_calibration_perms
+      cpp_time_per_perm <- cpp_elapsed_ms / effective_calibration_perms
+
+      # CRITICAL: Directly measure SERIAL C++ time for batch mode estimation
+      # Batch mode parallelizes CANDIDATES, not permutations
+      # So within each candidate, permutations run serially on one thread
+      # We measure this directly by running with n_threads=1
+      n_serial_test_perms <- 100  # Enough to get reliable timing
+      start_serial <- Sys.time()
+      serial_result <- test_combined_contribution_fast(
+        networks_g1 = networks_g1,
+        networks_g2 = networks_g2,
+        node_names = node_names,
+        selected_regions = test_region,
+        n_permutations = n_serial_test_perms,
+        n_threads = 1,  # Force single thread to measure serial time
+        seed = 43
+      )
+      serial_elapsed_ms <- as.numeric(difftime(Sys.time(), start_serial, units = "secs")) * 1000
+      cpp_serial_time_per_perm <- serial_elapsed_ms / n_serial_test_perms
 
       # Also measure R serial for comparison
       start_r <- Sys.time()
-      for (i in 1:min(5, n_calibration_perms)) {
+      for (i in 1:min(10, n_serial_test_perms)) {
         perm_idx <- sample(n_nodes)
         permuted_g1 <- lapply(networks_g1, function(m) m[perm_idx, perm_idx])
         permuted_g2 <- lapply(networks_g2, function(m) m[perm_idx, perm_idx])
         compute_averaged_jaccard(permuted_g1, permuted_g2, exclude_nodes = NULL)
       }
       r_elapsed_ms <- as.numeric(difftime(Sys.time(), start_r, units = "secs")) * 1000
-      r_time_per_perm <- r_elapsed_ms / min(5, n_calibration_perms)
+      r_time_per_perm <- r_elapsed_ms / min(10, n_serial_test_perms)
 
-      # Calculate speedup
-      cpp_speedup <- r_time_per_perm / cpp_time_per_perm
+      # Calculate speedups
+      cpp_speedup <- r_time_per_perm / cpp_time_per_perm  # Parallel speedup vs R
+      serial_speedup <- r_time_per_perm / cpp_serial_time_per_perm  # Serial C++ speedup vs R
 
       if (verbose) {
-        message("  C++ time per permutation: ", round(cpp_time_per_perm, 3), " ms")
-        message("  R serial time per permutation: ", round(r_time_per_perm, 2), " ms")
-        message("  C++ speedup: ", round(cpp_speedup, 1), "x")
+        message("  C++ parallel time per perm: ", round(cpp_time_per_perm, 4), " ms (with ", cpp_threads, " threads)")
+        message("  C++ serial time per perm: ", round(cpp_serial_time_per_perm, 4), " ms (for batch mode)")
+        message("  R serial time per perm: ", round(r_time_per_perm, 2), " ms")
+        message("  C++ parallel speedup: ", round(cpp_speedup, 1), "x vs R serial")
+        message("  C++ serial speedup: ", round(serial_speedup, 1), "x vs R serial")
         message("  OpenMP threads: ", cpp_threads)
+        message("  Calibration perms: ", effective_calibration_perms, " parallel + ", n_serial_test_perms, " serial")
       }
 
       # ========== MEASURE ENUMERATION TIME (Phase 1 of brute force) ==========
@@ -524,11 +583,14 @@ calibrate_parallel_performance <- function(analysis_results,
 
       return(list(
         time_per_perm_ms = cpp_time_per_perm,
+        # NEW: Serial time per perm for batch mode estimation
+        # Batch mode parallelizes CANDIDATES, so permutations within each candidate run serially
+        cpp_serial_time_per_perm_ms = cpp_serial_time_per_perm,
         r_time_per_perm_ms = r_time_per_perm,
         serial_time_ms = cpp_elapsed_ms,
         n_nodes = n_nodes,
         n_matrices = n_matrices,
-        n_calibration_perms = n_calibration_perms,
+        n_calibration_perms = effective_calibration_perms,  # Use actual perms run
         backend = "cpp_openmp",
         cpp_threads = cpp_threads,
         cpp_speedup = cpp_speedup,
@@ -537,7 +599,7 @@ calibrate_parallel_performance <- function(analysis_results,
         use_parallel = TRUE,
         recommendation = recommendation,
         calibration_timestamp = Sys.time(),
-        # NEW: Enumeration time for Phase 1 estimation
+        # Enumeration time for Phase 1 estimation
         enum_time_per_combo_ms = enum_time_per_combo_ms
       ))
 

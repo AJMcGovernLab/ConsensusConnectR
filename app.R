@@ -9650,13 +9650,19 @@ server <- function(input, output, session) {
         # Build notification message based on backend type
         if (calibration$backend == "cpp_openmp") {
           # C++ backend - show performance info
+          # Use serial time for display since batch mode parallelizes candidates, not permutations
+          serial_time_display <- if (!is.null(calibration$cpp_serial_time_per_perm_ms)) {
+            round(calibration$cpp_serial_time_per_perm_ms, 4)
+          } else {
+            round(calibration$time_per_perm_ms * calibration$cpp_threads * 0.85, 4)
+          }
           showNotification(
             HTML(paste0(
               "<strong style='color: #28a745;'>C++ Backend Active</strong><br>",
               "OpenMP threads: ", calibration$cpp_threads, "<br>",
-              "C++ time: ", round(calibration$time_per_perm_ms, 3), " ms/perm<br>",
+              "C++ serial time: ", serial_time_display, " ms/perm<br>",
               "R time: ", round(calibration$r_time_per_perm_ms, 2), " ms/perm<br>",
-              "Speedup: <strong>", round(calibration$cpp_speedup, 0), "x faster</strong><br>",
+              "Speedup: <strong>", round(calibration$cpp_speedup, 0), "x</strong> (", calibration$cpp_threads, " threads)<br>",
               "Nodes: ", calibration$n_nodes, ", Matrices: ", calibration$n_matrices
             )),
             type = "message",
