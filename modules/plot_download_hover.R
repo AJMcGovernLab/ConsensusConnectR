@@ -1443,10 +1443,29 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
               }
             }
 
-            # Determine colors
+            # Determine colors - use brain area colors if available
             bar_colors <- rep("#3498DB", n_regions)
-            bar_colors[observed$Contribution_Score > 0 & observed$Significant] <- "#E74C3C"
-            bar_colors[observed$Contribution_Score <= 0 & observed$Significant] <- "#27AE60"
+            if(!is.null(ui_state$area_colors) && !is.null(ui_state$brain_areas)) {
+              for(i in 1:n_regions) {
+                region <- observed$Region[i]
+                # Find which brain area this region belongs to
+                for(area_name in names(ui_state$brain_areas)) {
+                  if(region %in% names(ui_state$brain_areas) && region == area_name) {
+                    # Region name matches brain area name
+                    if(area_name %in% names(ui_state$area_colors)) {
+                      bar_colors[i] <- ui_state$area_colors[[area_name]]
+                    }
+                    break
+                  }
+                }
+              }
+            }
+            # Darken/lighten non-significant bars
+            for(i in 1:n_regions) {
+              if(!observed$Significant[i]) {
+                bar_colors[i] <- adjustcolor(bar_colors[i], alpha.f = 0.4)
+              }
+            }
 
             # Calculate x limits
             x_vals <- c(observed$Contribution_Score, ci_lower, ci_upper)
@@ -1478,11 +1497,30 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
                 text(x_pos, bp[i], observed$Significance_Stars[i], cex = 1.0, font = 2)
               }
             }
+
+            # Add legend for brain areas if colors are available
+            if(!is.null(ui_state$area_colors) && length(ui_state$area_colors) > 0) {
+              legend("topright",
+                     legend = c(names(ui_state$area_colors), "Not significant (faded)"),
+                     fill = c(unlist(ui_state$area_colors), adjustcolor("#808080", alpha.f = 0.4)),
+                     bty = "n", cex = 0.7, title = "Brain Areas")
+            }
           } else if(!is.null(results$regional_results)) {
-            # Fallback to old format
+            # Fallback to old format - also use brain area colors
             par(mar = c(10, 5, 3, 2))
             reg <- results$regional_results
-            colors <- ifelse(reg$significant, ifelse(reg$contribution > 0, "#E74C3C", "#3498DB"), "#CCCCCC")
+            colors <- rep("#3498DB", nrow(reg))
+            if(!is.null(ui_state$area_colors)) {
+              for(i in 1:nrow(reg)) {
+                region <- reg$region[i]
+                if(region %in% names(ui_state$area_colors)) {
+                  colors[i] <- ui_state$area_colors[[region]]
+                }
+              }
+              colors <- ifelse(reg$significant, colors, adjustcolor(colors, alpha.f = 0.4))
+            } else {
+              colors <- ifelse(reg$significant, ifelse(reg$contribution > 0, "#E74C3C", "#3498DB"), "#CCCCCC")
+            }
             barplot(reg$contribution, names.arg = reg$region, las = 2, horiz = TRUE,
                     col = colors, cex.names = 0.8, main = "Regional Contribution Analysis",
                     xlab = "Contribution Score")
