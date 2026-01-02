@@ -1448,14 +1448,18 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
             if(!is.null(ui_state$area_colors) && !is.null(ui_state$brain_areas)) {
               for(i in 1:n_regions) {
                 region <- observed$Region[i]
-                # Find which brain area this region belongs to
-                for(area_name in names(ui_state$brain_areas)) {
-                  if(region %in% names(ui_state$brain_areas) && region == area_name) {
-                    # Region name matches brain area name
-                    if(area_name %in% names(ui_state$area_colors)) {
-                      bar_colors[i] <- ui_state$area_colors[[area_name]]
+                # Check if region directly matches a brain area name (collective mode)
+                if(region %in% names(ui_state$area_colors)) {
+                  bar_colors[i] <- ui_state$area_colors[[region]]
+                } else {
+                  # Individual subregion mode - find which brain area contains this node
+                  for(area_name in names(ui_state$brain_areas)) {
+                    if(region %in% ui_state$brain_areas[[area_name]]) {
+                      if(area_name %in% names(ui_state$area_colors)) {
+                        bar_colors[i] <- ui_state$area_colors[[area_name]]
+                      }
+                      break
                     }
-                    break
                   }
                 }
               }
@@ -1510,11 +1514,22 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
             par(mar = c(10, 5, 3, 2))
             reg <- results$regional_results
             colors <- rep("#3498DB", nrow(reg))
-            if(!is.null(ui_state$area_colors)) {
+            if(!is.null(ui_state$area_colors) && !is.null(ui_state$brain_areas)) {
               for(i in 1:nrow(reg)) {
                 region <- reg$region[i]
+                # Check if region directly matches a brain area name (collective mode)
                 if(region %in% names(ui_state$area_colors)) {
                   colors[i] <- ui_state$area_colors[[region]]
+                } else {
+                  # Individual subregion mode - find which brain area contains this node
+                  for(area_name in names(ui_state$brain_areas)) {
+                    if(region %in% ui_state$brain_areas[[area_name]]) {
+                      if(area_name %in% names(ui_state$area_colors)) {
+                        colors[i] <- ui_state$area_colors[[area_name]]
+                      }
+                      break
+                    }
+                  }
                 }
               }
               colors <- ifelse(reg$significant, colors, adjustcolor(colors, alpha.f = 0.4))
@@ -1597,6 +1612,142 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
           plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "Regional Jaccard")
           text(1, 1, "Jaccard data not available in current mode", cex = 0.9, col = "gray50")
         }
+      }
+    ),
+
+    "artificialCombinationsSummaryPlot" = list(
+      condition = function() {
+        results <- analysis_results$regional_contribution
+        if(is.null(results)) return(FALSE)
+        if(is.null(results$mode) || results$mode != "artificial") return(FALSE)
+        if(is.null(results$discovery)) return(FALSE)
+        discovery <- results$discovery
+        if(is.null(discovery$top_dissimilarity) && is.null(discovery$top_similarity)) return(FALSE)
+        n_sig <- (discovery$n_significant_dissim %||% 0) + (discovery$n_significant_sim %||% 0)
+        return(n_sig > 0)
+      },
+      render = function() {
+        results <- analysis_results$regional_contribution
+        if(is.null(results) || is.null(results$mode) || results$mode != "artificial") {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "Run Artificial Brain Area Discovery first", cex = 1.1, col = "gray50")
+          return()
+        }
+
+        discovery <- results$discovery
+        if(is.null(discovery)) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "No discovery results available", cex = 1.1, col = "gray50")
+          return()
+        }
+
+        # Get significant results from both dissimilarity and similarity
+        top_dissim <- discovery$top_dissimilarity
+        top_sim <- discovery$top_similarity
+
+        # Filter for significant AND non-redundant (positive synergy for multi-region combos)
+        sig_nonredundant <- data.frame()
+
+        if(!is.null(top_dissim) && nrow(top_dissim) > 0) {
+          sig_d <- top_dissim[top_dissim$significant == TRUE, ]
+          if(nrow(sig_d) > 0) {
+            if("synergy" %in% names(sig_d)) {
+              sig_d <- sig_d[sig_d$size == 1 | (!is.na(sig_d$synergy) & sig_d$synergy > 0), ]
+            }
+            if(nrow(sig_d) > 0) {
+              sig_d$direction <- "Dissimilarity"
+              sig_nonredundant <- rbind(sig_nonredundant, sig_d)
+            }
+          }
+        }
+
+        if(!is.null(top_sim) && nrow(top_sim) > 0) {
+          sig_s <- top_sim[top_sim$significant == TRUE, ]
+          if(nrow(sig_s) > 0) {
+            if("synergy" %in% names(sig_s)) {
+              sig_s <- sig_s[sig_s$size == 1 | (!is.na(sig_s$synergy) & sig_s$synergy < 0), ]
+            }
+            if(nrow(sig_s) > 0) {
+              sig_s$direction <- "Similarity"
+              sig_nonredundant <- rbind(sig_nonredundant, sig_s)
+            }
+          }
+        }
+
+        if(nrow(sig_nonredundant) == 0) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "No significant non-redundant combinations found", cex = 1.1, col = "gray50")
+          return()
+        }
+
+        # Sort and limit
+        sig_nonredundant <- sig_nonredundant[order(-abs(sig_nonredundant$contribution)), ]
+        if(nrow(sig_nonredundant) > 20) sig_nonredundant <- head(sig_nonredundant, 20)
+
+        n_combos <- nrow(sig_nonredundant)
+        bar_colors <- ifelse(sig_nonredundant$direction == "Dissimilarity", "#E74C3C", "#3498DB")
+
+        # Brain area coloring for singles
+        if(!is.null(ui_state$brain_areas) && !is.null(ui_state$area_colors)) {
+          for(i in 1:n_combos) {
+            if(sig_nonredundant$size[i] == 1) {
+              region <- sig_nonredundant$nodes[i]
+              if(region %in% names(ui_state$area_colors)) {
+                bar_colors[i] <- ui_state$area_colors[[region]]
+              } else {
+                for(area_name in names(ui_state$brain_areas)) {
+                  if(region %in% ui_state$brain_areas[[area_name]]) {
+                    if(area_name %in% names(ui_state$area_colors)) {
+                      bar_colors[i] <- ui_state$area_colors[[area_name]]
+                    }
+                    break
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        max_label_len <- max(nchar(sig_nonredundant$nodes))
+        left_margin <- min(18, max(10, max_label_len * 0.4))
+        par(mar = c(5, left_margin, 4, 4))
+
+        x_max <- max(abs(sig_nonredundant$contribution), na.rm = TRUE) * 1.3
+
+        bp <- barplot(sig_nonredundant$contribution,
+                      horiz = TRUE,
+                      names.arg = sig_nonredundant$nodes,
+                      col = bar_colors,
+                      las = 1,
+                      xlim = c(-x_max, x_max),
+                      xlab = "Contribution Score",
+                      main = paste("Significant Non-Redundant Artificial Region Combinations\n",
+                                  results$group1_name, "vs", results$group2_name),
+                      cex.names = 0.65)
+
+        abline(v = 0, lty = 2, lwd = 2, col = "gray50")
+
+        # Significance stars
+        for(i in 1:n_combos) {
+          stars <- ""
+          if(!is.na(sig_nonredundant$p_value[i])) {
+            if(sig_nonredundant$p_value[i] < 0.001) stars <- "***"
+            else if(sig_nonredundant$p_value[i] < 0.01) stars <- "**"
+            else if(sig_nonredundant$p_value[i] < 0.05) stars <- "*"
+          }
+          if(stars != "") {
+            x_pos <- sig_nonredundant$contribution[i] + sign(sig_nonredundant$contribution[i]) * x_max * 0.05
+            text(x_pos, bp[i], stars, cex = 0.9, font = 2)
+          }
+        }
+
+        legend("topright",
+               legend = c("Dissimilarity (drives differences)", "Similarity (drives commonality)"),
+               fill = c("#E74C3C", "#3498DB"),
+               bty = "n", cex = 0.7)
+
+        mtext("Only showing combinations with synergistic effects (non-redundant)",
+              side = 1, line = 4, cex = 0.75, col = "gray40")
       }
     ),
 

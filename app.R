@@ -1125,6 +1125,21 @@ create_summary_ui <- function() {
 
             hr(),
 
+            # Part 4: Artificial Region Combinations (only shows when artificial mode was run)
+            conditionalPanel(
+              condition = "output.artificialResultsAvailable",
+              h6("Part 4: Significant Non-Redundant Artificial Region Combinations"),
+              tags$p(tags$em("Note: This section displays results from Artificial Brain Area Discovery mode."),
+                     style = "font-size: 0.85em; color: #888;"),
+              downloadablePlotOutput("artificialCombinationsSummaryPlot", height = "600px"),
+              tags$p(tags$em("Figure: Horizontal bar plot showing significant artificial region combinations with positive synergy
+                     (non-redundant). Combinations are colored by direction: red = dissimilarity drivers (regions whose removal
+                     increases group similarity), blue = similarity drivers. Only combinations where the combined effect exceeds
+                     the sum of individual effects are shown. Error bars show 95% CI from permutation null distribution."),
+                     style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
+              hr()
+            ),
+
             h5("Detailed Results Table"),
             DT::dataTableOutput("regionalContributionTable"),
 
@@ -4972,6 +4987,20 @@ server <- function(input, output, session) {
   
   output$analysisComplete <- reactive({ ui_state$analysis_complete })
   outputOptions(output, "analysisComplete", suspendWhenHidden = FALSE)
+
+  # Reactive output for artificial results availability
+  output$artificialResultsAvailable <- reactive({
+    results <- analysis_results$regional_contribution
+    if(is.null(results)) return(FALSE)
+    if(is.null(results$mode) || results$mode != "artificial") return(FALSE)
+    if(is.null(results$discovery)) return(FALSE)
+    # Check for brute force results with significant combinations
+    discovery <- results$discovery
+    if(is.null(discovery$top_dissimilarity) && is.null(discovery$top_similarity)) return(FALSE)
+    n_sig <- (discovery$n_significant_dissim %||% 0) + (discovery$n_significant_sim %||% 0)
+    return(n_sig > 0)
+  })
+  outputOptions(output, "artificialResultsAvailable", suspendWhenHidden = FALSE)
 
   # Update correlation method dropdowns to show only computed methods
   observeEvent(ui_state$analysis_complete, {
@@ -10972,6 +11001,169 @@ server <- function(input, output, session) {
       text(5, 5, paste("Mean Regional Jaccard:", round(mean(regional_j$Regional_Jaccard, na.rm = TRUE), 3)),
            cex = 1, col = "black")
       text(5, 4, paste("N Regions:", nrow(regional_j)), cex = 0.9, col = "gray40")
+    })
+  })
+
+  # Output: Artificial combinations summary plot (significant + non-redundant)
+  output$artificialCombinationsSummaryPlot <- renderPlot({
+    results <- regional_contribution_results()
+
+    # Check for artificial mode with brute force results
+    if(is.null(results) || is.null(results$mode) || results$mode != "artificial") {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "Run Artificial Brain Area Discovery first", cex = 1.1, col = "gray50")
+      return()
+    }
+
+    if(is.null(results$method) || results$method != "brute_force") {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "Brute force results not available", cex = 1.1, col = "gray50")
+      return()
+    }
+
+    discovery <- results$discovery
+    if(is.null(discovery)) {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "No discovery results available", cex = 1.1, col = "gray50")
+      return()
+    }
+
+    # Get significant results from both dissimilarity and similarity
+    top_dissim <- discovery$top_dissimilarity
+    top_sim <- discovery$top_similarity
+
+    # Filter for significant AND non-redundant (positive synergy for multi-region combos)
+    # For singles, always include if significant
+    # For multi-region, require synergy > 0 (combo effect exceeds sum of individual effects)
+    sig_nonredundant <- data.frame()
+
+    if(!is.null(top_dissim) && nrow(top_dissim) > 0) {
+      sig_d <- top_dissim[top_dissim$significant == TRUE, ]
+      if(nrow(sig_d) > 0) {
+        # For multi-region combos, filter for positive synergy
+        if("synergy" %in% names(sig_d)) {
+          sig_d <- sig_d[sig_d$size == 1 | (!is.na(sig_d$synergy) & sig_d$synergy > 0), ]
+        }
+        if(nrow(sig_d) > 0) {
+          sig_d$direction <- "Dissimilarity"
+          sig_nonredundant <- rbind(sig_nonredundant, sig_d)
+        }
+      }
+    }
+
+    if(!is.null(top_sim) && nrow(top_sim) > 0) {
+      sig_s <- top_sim[top_sim$significant == TRUE, ]
+      if(nrow(sig_s) > 0) {
+        # For multi-region combos, filter for positive synergy (in absolute terms)
+        if("synergy" %in% names(sig_s)) {
+          sig_s <- sig_s[sig_s$size == 1 | (!is.na(sig_s$synergy) & sig_s$synergy < 0), ]
+        }
+        if(nrow(sig_s) > 0) {
+          sig_s$direction <- "Similarity"
+          sig_nonredundant <- rbind(sig_nonredundant, sig_s)
+        }
+      }
+    }
+
+    if(nrow(sig_nonredundant) == 0) {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "No significant non-redundant combinations found", cex = 1.1, col = "gray50")
+      return()
+    }
+
+    # Sort by absolute contribution
+    sig_nonredundant <- sig_nonredundant[order(-abs(sig_nonredundant$contribution)), ]
+
+    # Limit to top 20 for display
+    if(nrow(sig_nonredundant) > 20) {
+      sig_nonredundant <- head(sig_nonredundant, 20)
+    }
+
+    n_combos <- nrow(sig_nonredundant)
+
+    # Set up colors by direction
+    bar_colors <- ifelse(sig_nonredundant$direction == "Dissimilarity", "#E74C3C", "#3498DB")
+
+    # Add brain area coloring if available and if it's a single region
+    if(!is.null(ui_state$brain_areas) && !is.null(ui_state$area_colors)) {
+      for(i in 1:n_combos) {
+        if(sig_nonredundant$size[i] == 1) {
+          region <- sig_nonredundant$nodes[i]
+          # Check if region directly matches a brain area name
+          if(region %in% names(ui_state$area_colors)) {
+            bar_colors[i] <- ui_state$area_colors[[region]]
+          } else {
+            # Look up which brain area contains this node
+            for(area_name in names(ui_state$brain_areas)) {
+              if(region %in% ui_state$brain_areas[[area_name]]) {
+                if(area_name %in% names(ui_state$area_colors)) {
+                  bar_colors[i] <- ui_state$area_colors[[area_name]]
+                }
+                break
+              }
+            }
+          }
+        }
+      }
+    }
+
+    # Calculate margins
+    max_label_len <- max(nchar(sig_nonredundant$nodes))
+    left_margin <- min(18, max(10, max_label_len * 0.4))
+
+    tryCatch({
+      par(mar = c(5, left_margin, 4, 4))
+
+      # Calculate x limits
+      x_max <- max(abs(sig_nonredundant$contribution), na.rm = TRUE) * 1.3
+
+      # Create barplot
+      bp <- barplot(sig_nonredundant$contribution,
+                    horiz = TRUE,
+                    names.arg = sig_nonredundant$nodes,
+                    col = bar_colors,
+                    las = 1,
+                    xlim = c(-x_max, x_max),
+                    xlab = "Contribution Score",
+                    main = paste("Significant Non-Redundant Artificial Region Combinations\n",
+                                results$group1_name, "vs", results$group2_name),
+                    cex.names = 0.65)
+
+      # Add zero line
+      abline(v = 0, lty = 2, lwd = 2, col = "gray50")
+
+      # Add significance stars
+      for(i in 1:n_combos) {
+        stars <- ""
+        if(!is.na(sig_nonredundant$p_value[i])) {
+          if(sig_nonredundant$p_value[i] < 0.001) stars <- "***"
+          else if(sig_nonredundant$p_value[i] < 0.01) stars <- "**"
+          else if(sig_nonredundant$p_value[i] < 0.05) stars <- "*"
+        }
+        if(stars != "") {
+          x_pos <- sig_nonredundant$contribution[i]
+          x_pos <- x_pos + sign(x_pos) * x_max * 0.05
+          text(x_pos, bp[i], stars, cex = 0.9, font = 2)
+        }
+      }
+
+      # Add legend
+      legend("topright",
+             legend = c("Dissimilarity (drives group differences)",
+                       "Similarity (drives group commonality)"),
+             fill = c("#E74C3C", "#3498DB"),
+             bty = "n", cex = 0.7)
+
+      # Add synergy note
+      mtext("Only showing combinations with synergistic effects (non-redundant)",
+            side = 1, line = 4, cex = 0.75, col = "gray40")
+
+    }, error = function(e) {
+      par(mar = c(2, 2, 3, 2))
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "",
+           xlim = c(0, 10), ylim = c(0, 10))
+      text(5, 6, "Plot display error - try resizing window", cex = 1.1, col = "gray50")
+      text(5, 5, paste("N combinations:", n_combos), cex = 1, col = "black")
     })
   })
 
