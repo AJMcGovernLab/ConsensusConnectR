@@ -946,14 +946,81 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
     "consensusNodeMetricsAcrossMethodsPlot" = list(
       condition = function() !is.null(analysis_results$comprehensive_consensus) && !is.null(analysis_results$method_percolation_results),
       render = function() {
-        render_consensus_node_metrics_plot(
-          analysis_results$comprehensive_consensus,
-          analysis_results$method_percolation_results,
-          ui_state$brain_areas,
-          ui_state$area_colors,
-          get_group_colors(),
-          selected_methods = input$selected_correlation_methods
-        )
+        selected_methods <- input$selected_correlation_methods
+        all_groups <- names(analysis_results$comprehensive_consensus)
+        if(length(all_groups) == 0) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "No consensus data available", cex = 1.2, col = "gray")
+          return()
+        }
+
+        methods <- filter_common_methods(analysis_results$comprehensive_consensus, selected_methods)
+        if(length(methods) == 0) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "No common methods across all groups", cex = 1.2, col = "gray")
+          return()
+        }
+
+        n_combos <- length(methods) * 3
+        n_groups <- length(all_groups)
+        par(mfrow = c(2, 2), mar = c(5, 5, 4, 2))
+
+        for(group in all_groups[1:min(4, n_groups)]) {
+          tryCatch({
+            consensus_df <- compute_comprehensive_rank_consensus(
+              group = group,
+              method_percolation_results = analysis_results$method_percolation_results,
+              method_weighted_results = analysis_results$method_weighted_results,
+              persistence_results = analysis_results$persistence_results,
+              methods = methods
+            )
+
+            if(is.null(consensus_df) || nrow(consensus_df) == 0) {
+              plot(1, type = "n", axes = FALSE, main = group)
+              text(1, 1, "No data available", cex = 1.0)
+              next
+            }
+
+            # Get colors by brain region
+            plot_colors <- rep("steelblue", nrow(consensus_df))
+            names(plot_colors) <- consensus_df$Node
+            if(!is.null(ui_state$brain_areas) && !is.null(ui_state$area_colors)) {
+              for(node in consensus_df$Node) {
+                for(area_name in names(ui_state$brain_areas)) {
+                  if(node %in% ui_state$brain_areas[[area_name]]) {
+                    if(area_name %in% names(ui_state$area_colors)) {
+                      plot_colors[node] <- ui_state$area_colors[[area_name]]
+                    }
+                    break
+                  }
+                }
+              }
+            }
+
+            n_methods <- consensus_df$N_Methods[1]
+            plot(consensus_df$Consensus_NodeStrength, consensus_df$Consensus_Eigenvector,
+                 pch = 21, cex = 2.2,
+                 bg = adjustcolor(plot_colors[consensus_df$Node], alpha.f = 0.6),
+                 col = adjustcolor(plot_colors[consensus_df$Node], alpha.f = 0.8),
+                 lwd = 2,
+                 xlab = "Consensus Node Strength (0 = lowest, 1 = highest)",
+                 ylab = "Consensus Eigenvector (0 = lowest, 1 = highest)",
+                 main = paste0("Rank-Based Consensus (", n_methods, " method-approach combos) - ", group),
+                 xlim = c(0, 1.05), ylim = c(0, 1.05))
+
+            # Add node labels
+            top_nodes <- consensus_df[order(consensus_df$Consensus_Eigenvector, decreasing = TRUE)[1:min(10, nrow(consensus_df))], ]
+            if(nrow(top_nodes) > 0 && requireNamespace("ggrepel", quietly = TRUE)) {
+              text(top_nodes$Consensus_NodeStrength, top_nodes$Consensus_Eigenvector,
+                   labels = top_nodes$Node, pos = 3, cex = 0.7, font = 2, col = "black")
+            }
+            grid(col = "gray90")
+            abline(0, 1, lty = 2, col = "gray70")
+          }, error = function(e) {
+            plot(1, type = "n", axes = FALSE, main = group)
+            text(1, 1, paste("Error:", substr(e$message, 1, 30)), cex = 0.8)
+          })
+        }
       }
     ),
 
@@ -970,14 +1037,119 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
     ),
 
     "consensusNetworkPlot" = list(
-      condition = function() !is.null(analysis_results$comprehensive_consensus),
+      condition = function() !is.null(analysis_results$comprehensive_consensus) && !is.null(analysis_results$method_percolation_results),
       render = function() {
-        render_consensus_network_plot(
-          analysis_results$comprehensive_consensus,
-          ui_state$brain_areas,
-          ui_state$area_colors,
-          get_group_colors()
-        )
+        method <- tolower(input$consensus_network_method %||% "pearson")
+        layout_type <- input$consensus_network_layout %||% "fr"
+        selected_methods <- input$selected_correlation_methods
+
+        perc_data <- analysis_results$method_percolation_results[[method]]
+        if(is.null(perc_data) || is.null(perc_data$networks)) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, paste("No percolation networks for", method), cex = 1.2, col = "gray")
+          return()
+        }
+
+        networks <- perc_data$networks
+        all_groups <- names(networks)
+        if(length(all_groups) == 0) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "No networks available", cex = 1.2, col = "gray")
+          return()
+        }
+
+        # Get consensus eigenvector for each group
+        methods <- filter_common_methods(analysis_results$comprehensive_consensus, selected_methods)
+        consensus_eigenvector_by_group <- list()
+
+        for(group in all_groups) {
+          consensus_df <- compute_comprehensive_rank_consensus(
+            group = group,
+            method_percolation_results = analysis_results$method_percolation_results,
+            method_weighted_results = analysis_results$method_weighted_results,
+            persistence_results = analysis_results$persistence_results,
+            methods = methods
+          )
+          if(!is.null(consensus_df) && nrow(consensus_df) > 0) {
+            consensus_eig <- consensus_df$Consensus_Eigenvector
+            names(consensus_eig) <- consensus_df$Node
+            consensus_eigenvector_by_group[[group]] <- consensus_eig
+          }
+        }
+
+        n_groups <- length(all_groups)
+        if(n_groups <= 2) {
+          par(mfrow = c(1, n_groups), mar = c(2, 2, 3, 2))
+        } else {
+          par(mfrow = c(2, 2), mar = c(2, 2, 3, 2))
+        }
+
+        for(group in all_groups[1:min(4, n_groups)]) {
+          network <- networks[[group]]
+          consensus_eig <- consensus_eigenvector_by_group[[group]]
+
+          if(is.null(network) || igraph::vcount(network) == 0 || is.null(consensus_eig)) {
+            plot(1, type = "n", xlab = "", ylab = "", axes = FALSE, main = paste("Group:", group))
+            text(1, 1, "No network data", cex = 1.2)
+            next
+          }
+
+          # Set node colors
+          if(!is.null(ui_state$brain_areas) && !is.null(ui_state$area_colors)) {
+            node_colors <- rep("#808080", igraph::vcount(network))
+            for(area_name in names(ui_state$brain_areas)) {
+              regions <- ui_state$brain_areas[[area_name]]
+              matching_nodes <- intersect(regions, igraph::V(network)$name)
+              if(length(matching_nodes) > 0) {
+                node_indices <- which(igraph::V(network)$name %in% matching_nodes)
+                if(area_name %in% names(ui_state$area_colors)) {
+                  node_colors[node_indices] <- ui_state$area_colors[[area_name]]
+                }
+              }
+            }
+            igraph::V(network)$color <- node_colors
+          } else {
+            igraph::V(network)$color <- "#1F78B4"
+          }
+
+          # Set node sizes based on consensus eigenvector
+          node_names <- igraph::V(network)$name
+          node_eig_values <- sapply(node_names, function(n) {
+            if(n %in% names(consensus_eig)) consensus_eig[n] else 0
+          })
+          if(max(node_eig_values) > min(node_eig_values)) {
+            igraph::V(network)$size <- scales::rescale(node_eig_values, to = c(5, 20))
+          } else {
+            igraph::V(network)$size <- 10
+          }
+
+          # Create layout
+          if(layout_type == "circle") {
+            graph_layout <- igraph::layout_in_circle(network)
+          } else if(layout_type == "kk") {
+            graph_layout <- igraph::layout_with_kk(network)
+          } else {
+            graph_layout <- igraph::layout_with_fr(network)
+          }
+
+          group_color <- if(!is.null(ui_state$group_colors) && group %in% names(ui_state$group_colors)) {
+            ui_state$group_colors[[group]]
+          } else { "black" }
+
+          plot(network, layout = graph_layout,
+               vertex.color = igraph::V(network)$color,
+               vertex.size = igraph::V(network)$size,
+               vertex.label = igraph::V(network)$name,
+               vertex.label.cex = 0.6, vertex.label.color = "black",
+               vertex.label.dist = 0, vertex.label.font = 2,
+               vertex.frame.color = "white",
+               edge.width = abs(igraph::E(network)$weight) * 2.5,
+               edge.color = adjustcolor("gray50", alpha.f = 0.6),
+               main = paste(group, "- Rank-Based Consensus Eigenvector"),
+               sub = paste(toupper(method), "percolation network | Node size = consensus score (0-1)"))
+          box(col = group_color, lwd = 3)
+        }
+        par(mfrow = c(1, 1))
       }
     ),
 
@@ -997,13 +1169,83 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
     "consensusSubregionalPlot" = list(
       condition = function() !is.null(analysis_results$comprehensive_consensus) && !is.null(ui_state$brain_areas),
       render = function() {
-        render_consensus_subregional_plot(
-          analysis_results$comprehensive_consensus,
-          ui_state$brain_areas,
-          ui_state$area_colors,
-          get_group_colors(),
-          selected_methods = input$selected_correlation_methods
-        )
+        selected_methods <- input$selected_correlation_methods
+        all_groups <- names(analysis_results$comprehensive_consensus)
+        if(length(all_groups) == 0) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "No consensus data available", cex = 1.2, col = "gray")
+          return()
+        }
+
+        region_names <- names(ui_state$brain_areas)
+        n_regions <- length(region_names)
+        methods <- filter_common_methods(analysis_results$comprehensive_consensus, selected_methods)
+
+        # Compute consensus for each group
+        all_consensus_data <- list()
+        for(group in all_groups) {
+          consensus_df <- compute_comprehensive_rank_consensus(
+            group = group,
+            method_percolation_results = analysis_results$method_percolation_results,
+            method_weighted_results = analysis_results$method_weighted_results,
+            persistence_results = analysis_results$persistence_results,
+            methods = methods
+          )
+          if(!is.null(consensus_df) && nrow(consensus_df) > 0) {
+            consensus_vec <- consensus_df$Consensus_Eigenvector
+            names(consensus_vec) <- consensus_df$Node
+            all_consensus_data[[group]] <- consensus_vec
+          }
+        }
+
+        if(length(all_consensus_data) == 0) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "No consensus data computed", cex = 1.2, col = "gray")
+          return()
+        }
+
+        # Get group colors
+        group_colors <- sapply(all_groups, function(g) {
+          if(!is.null(ui_state$group_colors[[g]])) ui_state$group_colors[[g]] else "#3498db"
+        })
+
+        par(mfrow = c(n_regions, 1), mar = c(8, 5, 3, 2))
+
+        for(region_name in region_names) {
+          region_nodes <- ui_state$brain_areas[[region_name]]
+          region_data <- matrix(NA, nrow = length(region_nodes), ncol = length(all_groups))
+          rownames(region_data) <- region_nodes
+          colnames(region_data) <- all_groups
+
+          for(i in seq_along(all_groups)) {
+            group <- all_groups[i]
+            if(!is.null(all_consensus_data[[group]])) {
+              consensus_vec <- all_consensus_data[[group]]
+              for(j in seq_along(region_nodes)) {
+                node <- region_nodes[j]
+                if(node %in% names(consensus_vec)) {
+                  region_data[j, i] <- consensus_vec[node]
+                }
+              }
+            }
+          }
+
+          if(all(is.na(region_data))) {
+            plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+            text(1, 1, paste("No data for", region_name), cex = 1, col = "gray")
+            next
+          }
+
+          bp <- barplot(t(region_data), beside = TRUE, names.arg = region_nodes,
+                        main = paste("Region:", region_name),
+                        ylab = "Consensus Eigenvector Score (0-1)",
+                        col = group_colors, border = group_colors,
+                        las = 2, cex.names = 0.8, ylim = c(0, 1.1))
+          grid(nx = NA, ny = NULL, col = "gray90")
+          if(region_name == region_names[1]) {
+            legend("topright", legend = all_groups, fill = group_colors, bty = "n", cex = 0.8)
+          }
+        }
       }
     ),
 
