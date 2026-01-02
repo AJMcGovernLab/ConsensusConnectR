@@ -2024,18 +2024,36 @@ hover_download_server <- function(input, output, session, analysis_results, ui_s
     }
 
     # Render the plot preview
+    # Calculate dynamic margins based on aspect ratio to prevent "margins too large" errors
+    aspect_ratio <- height_in / width_in
+    # Scale margins - reduce when aspect ratio is extreme
+    margin_scale <- min(1, aspect_ratio * 1.2, (1/aspect_ratio) * 1.2)
+    margin_scale <- max(0.3, margin_scale)  # Don't go too small
+
+    base_mar <- c(4, 4, 2, 2)
+    scaled_mar <- base_mar * margin_scale
+    cex_scale <- max(0.5, min(1, margin_scale * 1.2))
+
     tryCatch({
-      par(oma = c(0, 0, 1.5, 0), mar = c(4, 4, 2, 2), cex = 0.7, bg = "white")
+      par(oma = c(0, 0, 1.2, 0), mar = scaled_mar, cex = 0.7 * cex_scale, bg = "white")
       plot_info$render()
       mtext(sprintf("Preview: %.1f\" x %.1f\" @ %s DPI", width_in, height_in, dpi),
-            outer = TRUE, line = 0.2, cex = 0.9, font = 2, col = "#3498db")
+            outer = TRUE, line = 0.1, cex = 0.8 * cex_scale, font = 2, col = "#3498db")
     }, error = function(e) {
       message(sprintf("[Preview] Render error: %s", e$message))
-      par(mar = c(0, 0, 0, 0), bg = "#f8d7da")
-      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
-           xlim = c(0, 1), ylim = c(0, 1))
-      text(0.5, 0.6, "Error rendering preview", col = "#721c24", cex = 0.9)
-      text(0.5, 0.4, substr(e$message, 1, 50), col = "#721c24", cex = 0.7)
+      # Try again with minimal margins
+      tryCatch({
+        par(oma = c(0, 0, 0, 0), mar = c(2, 2, 1, 1), cex = 0.5, bg = "white")
+        plot_info$render()
+        mtext(sprintf("%.1f\" x %.1f\"", width_in, height_in),
+              side = 3, line = -1, cex = 0.6, col = "#3498db")
+      }, error = function(e2) {
+        par(mar = c(0, 0, 0, 0), bg = "#f8d7da")
+        plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "",
+             xlim = c(0, 1), ylim = c(0, 1))
+        text(0.5, 0.6, "Preview unavailable", col = "#721c24", cex = 0.9)
+        text(0.5, 0.4, "Download will render correctly", col = "#856404", cex = 0.7)
+      })
     })
 
   }, height = function() { preview_height() }, bg = "white")
