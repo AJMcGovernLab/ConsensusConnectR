@@ -90,12 +90,18 @@ calculate_required_permutations <- function(n_tests,
 #' data-driven formula when network dimensions are provided, or calibrated
 #' timing from benchmark runs.
 #'
-#' @param n_tests Number of statistical tests
+#' For artificial mode (brute force discovery), this includes two phases:
+#' - Phase 1 (enumeration): Computing Jaccard for all combinations WITHOUT permutations
+#' - Phase 4-5 (permutation testing): Running permutation tests on filtered candidates
+#'
+#' @param n_tests Number of statistical tests (for artificial mode: candidates to permutation-test)
 #' @param n_permutations Number of permutations per test
 #' @param n_workers Number of parallel workers (default: 1)
 #' @param n_nodes Number of nodes in the network (optional, for formula-based estimation)
 #' @param n_matrices Number of network matrices being compared (optional)
 #' @param calibrated_time_ms Time per permutation from calibration benchmark (optional)
+#' @param calibration Calibration object from calibrate_parallel_performance() (optional)
+#' @param n_enum_combos Number of combinations to enumerate in Phase 1 (artificial mode only)
 #' @return Named list with estimated time in seconds, minutes, formatted string,
 #'   time_per_perm_ms used, and estimation_method (calibrated/estimated/default)
 #' @export
@@ -105,7 +111,8 @@ estimate_permutation_runtime <- function(n_tests,
                                           n_nodes = NULL,
                                           n_matrices = NULL,
                                           calibrated_time_ms = NULL,
-                                          calibration = NULL) {
+                                          calibration = NULL,
+                                          n_enum_combos = 0) {
   # Validate inputs - return safe defaults if missing/invalid
 
   if (is.null(n_tests) || length(n_tests) == 0 || !is.numeric(n_tests) || n_tests <= 0) {
@@ -156,7 +163,33 @@ estimate_permutation_runtime <- function(n_tests,
     estimation_method <- "default"
   }
 
-  # Total permutation operations
+  # ========== PHASE 1: ENUMERATION TIME (for artificial/brute force mode) ==========
+  # This is the time to compute Jaccard for each combination WITHOUT permutations
+  enum_time_ms <- 0
+  enum_time_per_combo_ms <- 0
+
+  if (n_enum_combos > 0) {
+    # Get enumeration time per combination
+    if (!is.null(calibration) && !is.null(calibration$enum_time_per_combo_ms) &&
+        !is.na(calibration$enum_time_per_combo_ms)) {
+      # Use calibrated enumeration time
+      enum_time_per_combo_ms <- calibration$enum_time_per_combo_ms
+    } else if (!is.null(n_nodes) && !is.null(n_matrices)) {
+      # Formula-based estimate for enumeration (similar complexity to permutation)
+      # But enumeration involves 3 approach-specific Jaccard computations per combo
+      base_ms <- 1.0  # Slightly higher base for 3x approach calls
+      scaling_factor <- 0.00008  # Empirically tuned
+      enum_time_per_combo_ms <- base_ms + (n_nodes^2 * n_matrices * scaling_factor)
+    } else {
+      # Fallback estimate
+      enum_time_per_combo_ms <- 10
+    }
+
+    # Total enumeration time (Phase 1 runs serially)
+    enum_time_ms <- n_enum_combos * enum_time_per_combo_ms
+  }
+
+  # Total permutation operations (Phase 4-5)
   total_ops <- n_tests * n_permutations
 
   # Handle C++ backend specially - time_per_perm_ms is ALREADY parallelized
@@ -169,10 +202,12 @@ estimate_permutation_runtime <- function(n_tests,
     n_batches <- ceiling(n_tests / max(1, ceiling(n_tests / 10)))
     batch_overhead_ms <- n_batches * 5  # ~5ms overhead per C++ call
 
-    time_ms <- total_ops * time_per_perm_ms + batch_overhead_ms
+    perm_time_ms <- total_ops * time_per_perm_ms + batch_overhead_ms
+    time_ms <- enum_time_ms + perm_time_ms  # Include enumeration (Phase 1)
     serial_compute_ms <- time_ms  # For C++, "serial" time IS the parallel time (already optimized)
     parallel_beneficial <- TRUE  # C++ is always beneficial
     overhead_breakdown <- list(
+      enum_ms = enum_time_ms,
       spawn_ms = 0,
       serialization_ms = 0,
       batch_overhead_ms = batch_overhead_ms,
@@ -195,15 +230,17 @@ estimate_permutation_runtime <- function(n_tests,
       serialization_ms <- n_chunks * 100  # Conservative default
     }
 
-    # Parallel compute time
+    # Parallel compute time for permutations
     parallel_compute_ms <- serial_compute_ms / n_workers
 
-    # Total time with overhead
-    time_ms <- spawn_overhead_ms + parallel_compute_ms + serialization_ms
+    # Total time with overhead + enumeration (Phase 1 runs serially before parallel phase)
+    perm_time_ms <- spawn_overhead_ms + parallel_compute_ms + serialization_ms
+    time_ms <- enum_time_ms + perm_time_ms
 
-    # Check if parallel is beneficial
-    parallel_beneficial <- time_ms < serial_compute_ms
+    # Check if parallel is beneficial (compare perm phase only)
+    parallel_beneficial <- perm_time_ms < serial_compute_ms
     overhead_breakdown <- list(
+      enum_ms = enum_time_ms,
       spawn_ms = spawn_overhead_ms,
       serialization_ms = serialization_ms,
       compute_ms = parallel_compute_ms
@@ -211,9 +248,10 @@ estimate_permutation_runtime <- function(n_tests,
   } else {
     # Serial R execution
     serial_compute_ms <- total_ops * time_per_perm_ms
-    time_ms <- serial_compute_ms
+    time_ms <- enum_time_ms + serial_compute_ms  # Include enumeration
     parallel_beneficial <- FALSE
     overhead_breakdown <- list(
+      enum_ms = enum_time_ms,
       spawn_ms = 0,
       serialization_ms = 0,
       compute_ms = serial_compute_ms
@@ -249,7 +287,11 @@ estimate_permutation_runtime <- function(n_tests,
     estimation_method = estimation_method,
     parallel_beneficial = parallel_beneficial,
     serial_time_ms = serial_compute_ms,
-    overhead_breakdown = overhead_breakdown
+    overhead_breakdown = overhead_breakdown,
+    # NEW: Enumeration phase info (for artificial/brute force mode)
+    n_enum_combos = n_enum_combos,
+    enum_time_ms = enum_time_ms,
+    enum_time_per_combo_ms = enum_time_per_combo_ms
   ))
 }
 
@@ -427,6 +469,43 @@ calibrate_parallel_performance <- function(analysis_results,
         message("  OpenMP threads: ", cpp_threads)
       }
 
+      # ========== MEASURE ENUMERATION TIME (Phase 1 of brute force) ==========
+      # This measures time to compute Jaccard for one combination WITHOUT permutations
+      # Brute force Phase 1 does this for ALL combinations before any permutation testing
+      if (verbose) message("  Measuring enumeration time (Jaccard computation per combination)...")
+
+      # Extract networks by approach (same structure as brute_force_discovery uses)
+      networks_by_approach_g1 <- tryCatch(
+        extract_networks_by_approach(group1, analysis_results, methods),
+        error = function(e) NULL
+      )
+      networks_by_approach_g2 <- tryCatch(
+        extract_networks_by_approach(group2, analysis_results, methods),
+        error = function(e) NULL
+      )
+
+      enum_time_per_combo_ms <- NA
+      if (!is.null(networks_by_approach_g1) && !is.null(networks_by_approach_g2)) {
+        # Time computation for a few test combinations
+        n_enum_tests <- min(20, n_nodes)
+        test_regions <- sample(node_names, n_enum_tests)
+
+        start_enum <- Sys.time()
+        for (test_region in test_regions) {
+          # Compute Jaccard for each approach (same as Phase 1)
+          compute_approach_jaccard(networks_by_approach_g1$weighted, networks_by_approach_g2$weighted,
+                                   exclude_nodes = test_region)
+          compute_approach_jaccard(networks_by_approach_g1$percolation, networks_by_approach_g2$percolation,
+                                   exclude_nodes = test_region)
+          compute_persistence_jaccard(networks_by_approach_g1$persistence, networks_by_approach_g2$persistence,
+                                      exclude_nodes = test_region)
+        }
+        enum_elapsed_ms <- as.numeric(difftime(Sys.time(), start_enum, units = "secs")) * 1000
+        enum_time_per_combo_ms <- enum_elapsed_ms / n_enum_tests
+
+        if (verbose) message("  Enumeration time per combination: ", round(enum_time_per_combo_ms, 2), " ms")
+      }
+
       recommendation <- sprintf("C++ backend with %d OpenMP threads (%.0fx faster than R)",
                                  cpp_threads, cpp_speedup)
 
@@ -444,7 +523,9 @@ calibrate_parallel_performance <- function(analysis_results,
         optimal_speedup = cpp_speedup,
         use_parallel = TRUE,
         recommendation = recommendation,
-        calibration_timestamp = Sys.time()
+        calibration_timestamp = Sys.time(),
+        # NEW: Enumeration time for Phase 1 estimation
+        enum_time_per_combo_ms = enum_time_per_combo_ms
       ))
 
     }, error = function(e) {
@@ -586,9 +667,43 @@ calibrate_parallel_performance <- function(analysis_results,
   # Always return target_workers as optimal (that's what user selected/will use)
   optimal_workers <- if (use_parallel) target_workers else 1
 
+  # ========== MEASURE ENUMERATION TIME (Phase 1 of brute force) ==========
+  # This measures time to compute Jaccard for one combination WITHOUT permutations
+  if (verbose) message("Phase 3: Measuring enumeration time...")
+
+  networks_by_approach_g1 <- tryCatch(
+    extract_networks_by_approach(group1, analysis_results, methods),
+    error = function(e) NULL
+  )
+  networks_by_approach_g2 <- tryCatch(
+    extract_networks_by_approach(group2, analysis_results, methods),
+    error = function(e) NULL
+  )
+
+  enum_time_per_combo_ms <- NA
+  if (!is.null(networks_by_approach_g1) && !is.null(networks_by_approach_g2)) {
+    n_enum_tests <- min(20, n_nodes)
+    test_regions <- sample(node_names, n_enum_tests)
+
+    start_enum <- Sys.time()
+    for (test_region in test_regions) {
+      compute_approach_jaccard(networks_by_approach_g1$weighted, networks_by_approach_g2$weighted,
+                               exclude_nodes = test_region)
+      compute_approach_jaccard(networks_by_approach_g1$percolation, networks_by_approach_g2$percolation,
+                               exclude_nodes = test_region)
+      compute_persistence_jaccard(networks_by_approach_g1$persistence, networks_by_approach_g2$persistence,
+                                  exclude_nodes = test_region)
+    }
+    enum_elapsed_ms <- as.numeric(difftime(Sys.time(), start_enum, units = "secs")) * 1000
+    enum_time_per_combo_ms <- enum_elapsed_ms / n_enum_tests
+
+    if (verbose) message("  Enumeration time per combination: ", round(enum_time_per_combo_ms, 2), " ms")
+  }
+
   if (verbose) {
     message("\nCalibration complete:")
     message("  R serial time per perm: ", round(time_per_perm_ms, 2), " ms")
+    message("  Enumeration time per combo: ", round(enum_time_per_combo_ms, 2), " ms")
     message("  Target workers: ", target_workers)
     message("  Spawn overhead/worker: ", round(spawn_overhead_per_worker, 0), " ms")
     message("  Parallel beneficial: ", use_parallel)
@@ -609,7 +724,9 @@ calibrate_parallel_performance <- function(analysis_results,
     use_parallel = use_parallel,
     spawn_overhead_per_worker_ms = spawn_overhead_per_worker,
     recommendation = recommendation,
-    calibration_timestamp = Sys.time()
+    calibration_timestamp = Sys.time(),
+    # NEW: Enumeration time for Phase 1 estimation
+    enum_time_per_combo_ms = enum_time_per_combo_ms
   )
 }
 

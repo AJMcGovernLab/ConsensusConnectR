@@ -9471,7 +9471,8 @@ server <- function(input, output, session) {
       n_nodes = n_nodes,
       n_matrices = n_matrices,
       calibrated_time_ms = calibrated_ms,
-      calibration = calibration
+      calibration = calibration,
+      n_enum_combos = n_enum_combos  # Pass enumeration count for artificial mode
     )
 
     # Format estimation method label
@@ -9523,7 +9524,7 @@ server <- function(input, output, session) {
 
     # Build operations info based on mode
     ops_info <- if (n_enum_combos > 0) {
-      # Artificial mode - show breakdown with filter info
+      # Artificial mode - show breakdown with filter info AND phase timing
       filter_label <- switch(input$discovery_candidate_filter,
         "all" = "all candidates",
         "sd_1" = ">1 SD filter",
@@ -9533,12 +9534,46 @@ server <- function(input, output, session) {
         "pct_25" = "top/bottom 25%",
         "filtered"
       )
+
+      # Format phase times
+      enum_time_formatted <- if (!is.null(runtime$enum_time_ms) && runtime$enum_time_ms > 0) {
+        enum_secs <- runtime$enum_time_ms / 1000
+        if (enum_secs < 60) {
+          sprintf("~%.0f sec", enum_secs)
+        } else {
+          sprintf("~%.1f min", enum_secs / 60)
+        }
+      } else {
+        "N/A"
+      }
+
+      perm_time_ms <- runtime$time_seconds * 1000 - (runtime$enum_time_ms %||% 0)
+      perm_time_formatted <- if (perm_time_ms > 0) {
+        perm_secs <- perm_time_ms / 1000
+        if (perm_secs < 60) {
+          sprintf("~%.0f sec", perm_secs)
+        } else {
+          sprintf("~%.1f min", perm_secs / 60)
+        }
+      } else {
+        "N/A"
+      }
+
       tagList(
-        tags$p(paste0(format(n_enum_combos, big.mark = ","), " combinations to enumerate"),
-               style = "font-size: 0.85em; color: #666; margin-bottom: 2px;"),
-        tags$p(paste0(format(runtime$total_operations, big.mark = ","), " permutation tests (~",
-                      format(n_perm_tests, big.mark = ","), " candidates, ", filter_label, ")"),
-               style = "font-size: 0.85em; color: #666; margin-bottom: 0;")
+        tags$p(
+          tags$strong("Phase 1 (Enumeration): "),
+          paste0(format(n_enum_combos, big.mark = ","), " combos - ", enum_time_formatted),
+          style = "font-size: 0.85em; color: #666; margin-bottom: 2px;"
+        ),
+        tags$p(
+          tags$strong("Phase 2 (Permutation): "),
+          paste0(format(n_perm_tests, big.mark = ","), " candidates × ", n_perms, " perms - ", perm_time_formatted),
+          style = "font-size: 0.85em; color: #666; margin-bottom: 2px;"
+        ),
+        tags$p(
+          paste0("Filter: ", filter_label),
+          style = "font-size: 0.8em; color: #888; margin-bottom: 0;"
+        )
       )
     } else {
       tags$p(paste0(format(runtime$total_operations, big.mark = ","), " total operations"),
