@@ -1645,14 +1645,25 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
         top_dissim <- discovery$top_dissimilarity
         top_sim <- discovery$top_similarity
 
-        # Filter for significant AND synergistic/additive (non-redundant)
+        # Filter for FDR-significant AND synergistic/additive (non-redundant)
         sig_nonredundant <- data.frame()
 
         if(!is.null(top_dissim) && nrow(top_dissim) > 0) {
-          sig_d <- top_dissim[top_dissim$significant == TRUE, ]
+          # Use p_adjusted for FDR significance (handle NAs explicitly)
+          if("p_adjusted" %in% names(top_dissim)) {
+            sig_d <- top_dissim[!is.na(top_dissim$p_adjusted) & top_dissim$p_adjusted < 0.05, ]
+          } else if("significant" %in% names(top_dissim)) {
+            sig_d <- top_dissim[!is.na(top_dissim$significant) & top_dissim$significant == TRUE, ]
+          } else {
+            sig_d <- data.frame()
+          }
+
           if(nrow(sig_d) > 0) {
             if("synergy" %in% names(sig_d)) {
-              sig_d <- sig_d[sig_d$size == 1 | (!is.na(sig_d$synergy) & sig_d$synergy >= 0), ]
+              # Singles: always include; Multi-region: require synergy >= 0
+              is_single <- sig_d$size == 1
+              is_synergistic <- !is.na(sig_d$synergy) & sig_d$synergy >= 0
+              sig_d <- sig_d[is_single | is_synergistic, ]
             }
             if(nrow(sig_d) > 0) {
               sig_d$direction <- "Dissimilarity"
@@ -1662,10 +1673,21 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
         }
 
         if(!is.null(top_sim) && nrow(top_sim) > 0) {
-          sig_s <- top_sim[top_sim$significant == TRUE, ]
+          # Use p_adjusted for FDR significance (handle NAs explicitly)
+          if("p_adjusted" %in% names(top_sim)) {
+            sig_s <- top_sim[!is.na(top_sim$p_adjusted) & top_sim$p_adjusted < 0.05, ]
+          } else if("significant" %in% names(top_sim)) {
+            sig_s <- top_sim[!is.na(top_sim$significant) & top_sim$significant == TRUE, ]
+          } else {
+            sig_s <- data.frame()
+          }
+
           if(nrow(sig_s) > 0) {
             if("synergy" %in% names(sig_s)) {
-              sig_s <- sig_s[sig_s$size == 1 | (!is.na(sig_s$synergy) & sig_s$synergy <= 0), ]
+              # Singles: always include; Multi-region: require synergy <= 0
+              is_single <- sig_s$size == 1
+              is_synergistic <- !is.na(sig_s$synergy) & sig_s$synergy <= 0
+              sig_s <- sig_s[is_single | is_synergistic, ]
             }
             if(nrow(sig_s) > 0) {
               sig_s$direction <- "Similarity"
