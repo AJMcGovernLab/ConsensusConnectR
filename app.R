@@ -11135,13 +11135,25 @@ server <- function(input, output, session) {
           # Multi-region: require synergy <= 0 (synergistic or additive for similarity)
           is_single <- sig_s$size == 1
           is_synergistic <- !is.na(sig_s$synergy) & sig_s$synergy <= 0
+          message("[DEBUG Plot SIM] Before filter: ", nrow(sig_s), " rows")
+          message("[DEBUG Plot SIM] Singles: ", sum(is_single), ", Synergistic: ", sum(is_synergistic, na.rm=TRUE))
           sig_s <- sig_s[is_single | is_synergistic, ]
+          message("[DEBUG Plot SIM] After filter: ", nrow(sig_s), " rows")
+        } else {
+          message("[DEBUG Plot SIM] WARNING: No synergy column found!")
         }
         if(nrow(sig_s) > 0) {
           sig_s$direction <- "Similarity"
           sig_nonredundant <- rbind(sig_nonredundant, sig_s)
         }
       }
+    }
+
+    message("[DEBUG Plot FINAL] Total rows to plot: ", nrow(sig_nonredundant))
+    if(nrow(sig_nonredundant) > 0) {
+      message("[DEBUG Plot FINAL] Nodes: ", paste(head(sig_nonredundant$nodes, 10), collapse=", "))
+      message("[DEBUG Plot FINAL] Synergy: ", paste(head(sig_nonredundant$synergy, 10), collapse=", "))
+      message("[DEBUG Plot FINAL] Size: ", paste(head(sig_nonredundant$size, 10), collapse=", "))
     }
 
     if(nrow(sig_nonredundant) == 0) {
