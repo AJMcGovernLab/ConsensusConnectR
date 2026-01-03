@@ -11073,6 +11073,14 @@ server <- function(input, output, session) {
     top_dissim <- discovery$top_dissimilarity
     top_sim <- discovery$top_similarity
 
+    # DEBUG: Print column names to verify synergy exists
+    message("[DEBUG Plot] top_dissim columns: ", paste(names(top_dissim), collapse=", "))
+    message("[DEBUG Plot] 'synergy' in names: ", "synergy" %in% names(top_dissim))
+    if("synergy" %in% names(top_dissim) && nrow(top_dissim) > 0) {
+      message("[DEBUG Plot] synergy values (first 10): ", paste(head(top_dissim$synergy, 10), collapse=", "))
+      message("[DEBUG Plot] size values (first 10): ", paste(head(top_dissim$size, 10), collapse=", "))
+    }
+
     # Filter for FDR-significant AND synergistic/additive (non-redundant)
     # For singles, always include if significant
     # For multi-region, require synergy >= 0 (dissim) or <= 0 (sim) to exclude redundant
@@ -11095,7 +11103,13 @@ server <- function(input, output, session) {
           # Multi-region: require synergy >= 0 (synergistic or additive)
           is_single <- sig_d$size == 1
           is_synergistic <- !is.na(sig_d$synergy) & sig_d$synergy >= 0
+          message("[DEBUG Plot] Before filter: ", nrow(sig_d), " rows")
+          message("[DEBUG Plot] Singles: ", sum(is_single), ", Synergistic: ", sum(is_synergistic, na.rm=TRUE))
+          message("[DEBUG Plot] Keeping: ", sum(is_single | is_synergistic), " rows")
           sig_d <- sig_d[is_single | is_synergistic, ]
+          message("[DEBUG Plot] After filter: ", nrow(sig_d), " rows")
+        } else {
+          message("[DEBUG Plot] WARNING: No synergy column found - no filtering applied!")
         }
         if(nrow(sig_d) > 0) {
           sig_d$direction <- "Dissimilarity"
