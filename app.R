@@ -9843,8 +9843,9 @@ server <- function(input, output, session) {
         if(is.null(node_names)) node_names <- paste0("Node", 1:nrow(first_mat))
         n_nodes <- length(node_names)
 
-        # Use fixed max size of 6 for elbow analysis (we want to see the full curve)
-        max_size_for_elbow <- min(6, n_nodes - 2)
+        # Use p/2 for elbow analysis (testing up to half the nodes makes theoretical sense)
+        # Cap at 8 to prevent excessive computation for large networks
+        max_size_for_elbow <- min(floor(n_nodes / 2), 8, n_nodes - 2)
 
         setProgress(0.1, detail = "Computing baselines...")
 
