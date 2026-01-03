@@ -9844,8 +9844,8 @@ server <- function(input, output, session) {
         n_nodes <- length(node_names)
 
         # Use p/2 for elbow analysis (testing up to half the nodes makes theoretical sense)
-        # Cap at 8 to prevent excessive computation for large networks
-        max_size_for_elbow <- min(floor(n_nodes / 2), 8, n_nodes - 2)
+        # You wouldn't typically combine more than half your regions into one "artificial" area
+        max_size_for_elbow <- min(floor(n_nodes / 2), n_nodes - 2)
 
         setProgress(0.1, detail = "Computing baselines...")
 
