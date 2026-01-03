@@ -988,6 +988,34 @@ create_summary_ui <- function() {
                     tags$p("Tests all region combinations with permutation testing and FDR correction. Use SD filters for computational efficiency.",
                            style = "font-size: 0.85em; margin-bottom: 0; color: #004085;")
                   ),
+                  # Elbow Analysis Section
+                  tags$div(
+                    style = "background-color: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 10px; border: 1px solid #ffc107;",
+                    tags$p(tags$strong("Find Optimal Combination Size"), style = "margin-bottom: 5px; color: #856404;"),
+                    tags$p("Run a quick analysis (no permutation testing) to find the elbow point where adding more regions stops improving synergy.",
+                           style = "font-size: 0.85em; margin-bottom: 8px; color: #856404;"),
+                    fluidRow(
+                      column(8,
+                        actionButton("run_elbow_analysis", "Run Elbow Analysis",
+                                    icon = icon("chart-line"),
+                                    style = "background-color: #ffc107; color: #212529; border-color: #ffc107;")
+                      ),
+                      column(4,
+                        actionButton("apply_elbow_result", "Apply",
+                                    icon = icon("check"),
+                                    style = "background-color: #28a745; color: white; border-color: #28a745;")
+                      )
+                    ),
+                    conditionalPanel(
+                      condition = "output.elbow_analysis_complete",
+                      tags$hr(style = "margin: 10px 0;"),
+                      plotOutput("elbow_plot", height = "200px"),
+                      tags$div(
+                        style = "text-align: center; margin-top: 5px;",
+                        uiOutput("elbow_recommendation")
+                      )
+                    )
+                  ),
                   fluidRow(
                     column(6,
                       numericInput("discovery_max_combo_size",
@@ -3274,7 +3302,8 @@ server <- function(input, output, session) {
     area_colors = list(),
     group_colors = list(),
     calibrated_time_ms = NULL,  # Calibrated time per permutation (from benchmark)
-    calibration_data = NULL     # Full calibration object with parallel overhead data
+    calibration_data = NULL,    # Full calibration object with parallel overhead data
+    elbow_analysis = NULL       # Stores elbow analysis results for optimal combination size
   )
   
   # Default brain areas (from original)
@@ -9748,6 +9777,308 @@ server <- function(input, output, session) {
              style = "font-size: 0.9em; font-weight: bold; margin-bottom: 5px;"),
       tags$p(paste0("Filter: ", filter_desc),
              style = "font-size: 0.85em; color: #666; margin-bottom: 0;")
+    )
+  })
+
+  # ========== ELBOW ANALYSIS FOR OPTIMAL COMBINATION SIZE ==========
+
+  # Output flag to show/hide elbow results panel
+  output$elbow_analysis_complete <- reactive({
+    !is.null(ui_state$elbow_analysis)
+  })
+  outputOptions(output, "elbow_analysis_complete", suspendWhenHidden = FALSE)
+
+  # Run elbow analysis (quick computation without permutation testing)
+  observeEvent(input$run_elbow_analysis, {
+    req(analysis_results$correlation_methods_raw)
+    req(input$regional_contrib_group1, input$regional_contrib_group2)
+    req(ui_state$brain_areas)
+    req(selected_methods())
+
+    # Validate groups are different
+    if(input$regional_contrib_group1 == input$regional_contrib_group2) {
+      showNotification("Please select two different groups for comparison.",
+                      type = "error", duration = 5)
+      return(NULL)
+    }
+
+    tryCatch({
+      withProgress(message = "Running Elbow Analysis", value = 0, {
+
+        setProgress(0.05, detail = "Extracting networks...")
+
+        methods <- selected_methods()
+
+        # Build analysis data structure
+        analysis_data <- list(
+          correlation_methods_raw = analysis_results$correlation_methods_raw
+        )
+
+        # Get group names sorted for symmetric processing
+        groups_sorted <- sort(c(input$regional_contrib_group1, input$regional_contrib_group2))
+        internal_g1 <- groups_sorted[1]
+        internal_g2 <- groups_sorted[2]
+
+        # Extract networks
+        networks_g1 <- extract_networks_by_approach(internal_g1, analysis_data, methods)
+        networks_g2 <- extract_networks_by_approach(internal_g2, analysis_data, methods)
+
+        # Get node names
+        first_mat <- NULL
+        if(length(networks_g1$weighted) > 0) {
+          first_mat <- networks_g1$weighted[[1]]
+        } else if(length(networks_g1$percolation) > 0) {
+          first_mat <- networks_g1$percolation[[1]]
+        } else if(length(networks_g1$persistence) > 0) {
+          first_mat <- networks_g1$persistence[[1]][[1]]
+        }
+
+        if(is.null(first_mat)) {
+          showNotification("Could not extract network matrices.", type = "error")
+          return(NULL)
+        }
+
+        node_names <- rownames(first_mat)
+        if(is.null(node_names)) node_names <- colnames(first_mat)
+        if(is.null(node_names)) node_names <- paste0("Node", 1:nrow(first_mat))
+        n_nodes <- length(node_names)
+
+        # Use fixed max size of 6 for elbow analysis (we want to see the full curve)
+        max_size_for_elbow <- min(6, n_nodes - 2)
+
+        setProgress(0.1, detail = "Computing baselines...")
+
+        # Compute baselines
+        baseline_weighted <- compute_approach_jaccard(networks_g1$weighted, networks_g2$weighted)
+        baseline_percolation <- compute_approach_jaccard(networks_g1$percolation, networks_g2$percolation)
+        baseline_persistence <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence)
+
+        # Enumerate combinations and compute contributions
+        all_combos_list <- list()
+        combo_id <- 0
+        total_combos <- sum(sapply(1:max_size_for_elbow, function(k) choose(n_nodes, k)))
+
+        setProgress(0.15, detail = paste0("Enumerating ", format(total_combos, big.mark = ","), " combinations..."))
+
+        for(size in 1:max_size_for_elbow) {
+          combos <- combn(node_names, size, simplify = FALSE)
+
+          for(combo in combos) {
+            combo_id <- combo_id + 1
+
+            # Update progress
+            if(combo_id %% 100 == 0) {
+              setProgress(0.15 + (combo_id / total_combos) * 0.7,
+                         detail = paste0("Processing ", combo_id, "/", total_combos))
+            }
+
+            # Compute Jaccard without these regions
+            J_weighted <- compute_approach_jaccard(networks_g1$weighted, networks_g2$weighted,
+                                                    exclude_nodes = combo)
+            J_percolation <- compute_approach_jaccard(networks_g1$percolation, networks_g2$percolation,
+                                                       exclude_nodes = combo)
+            J_persistence <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence,
+                                                          exclude_nodes = combo)
+
+            # Compute contributions
+            contrib_weighted <- if(!is.na(J_weighted) && !is.na(baseline_weighted)) {
+              J_weighted - baseline_weighted
+            } else { NA }
+
+            contrib_percolation <- if(!is.na(J_percolation) && !is.na(baseline_percolation)) {
+              J_percolation - baseline_percolation
+            } else { NA }
+
+            contrib_persistence <- if(!is.na(J_persistence) && !is.na(baseline_persistence)) {
+              J_persistence - baseline_persistence
+            } else { NA }
+
+            # Combined contribution
+            valid_contribs <- c(contrib_weighted, contrib_percolation, contrib_persistence)
+            valid_contribs <- valid_contribs[!is.na(valid_contribs)]
+
+            if(length(valid_contribs) == 0) next
+
+            contrib_combined <- mean(valid_contribs)
+            direction <- ifelse(contrib_combined > 0, "dissimilarity", "similarity")
+
+            all_combos_list[[combo_id]] <- data.frame(
+              nodes = paste(combo, collapse = ", "),
+              nodes_list = I(list(combo)),
+              size = length(combo),
+              contribution = contrib_combined,
+              direction = direction,
+              stringsAsFactors = FALSE
+            )
+          }
+        }
+
+        setProgress(0.85, detail = "Computing synergy...")
+
+        # Combine results
+        all_results <- do.call(rbind, all_combos_list)
+
+        # Compute synergy
+        singles <- all_results[all_results$size == 1, ]
+        singles_lookup <- setNames(singles$contribution, singles$nodes)
+
+        all_results$synergy <- NA
+
+        for(i in 1:nrow(all_results)) {
+          combo <- all_results$nodes_list[[i]]
+          if(length(combo) > 1) {
+            individual_contribs <- singles_lookup[combo]
+            if(all(!is.na(individual_contribs))) {
+              expected_additive <- sum(individual_contribs)
+              all_results$synergy[i] <- all_results$contribution[i] - expected_additive
+            }
+          }
+        }
+
+        setProgress(0.9, detail = "Finding elbow point...")
+
+        # Aggregate synergy by size for each direction
+        # For dissimilarity: positive synergy = synergistic (more different than expected)
+        # For similarity: negative synergy = synergistic (more similar than expected)
+
+        # Get best synergy per size for each direction
+        dissim_df <- all_results[all_results$direction == "dissimilarity" & all_results$size > 1, ]
+        sim_df <- all_results[all_results$direction == "similarity" & all_results$size > 1, ]
+
+        # For dissimilarity: max synergy per size (looking for positive synergy)
+        if(nrow(dissim_df) > 0) {
+          dissim_by_size <- aggregate(synergy ~ size, data = dissim_df, FUN = max, na.rm = TRUE)
+        } else {
+          dissim_by_size <- data.frame(size = integer(0), synergy = numeric(0))
+        }
+
+        # For similarity: min synergy per size (looking for negative synergy = synergistic)
+        if(nrow(sim_df) > 0) {
+          sim_by_size <- aggregate(synergy ~ size, data = sim_df, FUN = min, na.rm = TRUE)
+        } else {
+          sim_by_size <- data.frame(size = integer(0), synergy = numeric(0))
+        }
+
+        # Find elbow using second derivative
+        find_elbow <- function(summary_df, direction_type) {
+          if(nrow(summary_df) < 3) {
+            return(list(elbow_size = max(summary_df$size, 2), elbow_idx = nrow(summary_df)))
+          }
+
+          summary_df <- summary_df[order(summary_df$size), ]
+          y <- summary_df$synergy
+
+          # For similarity, we want the most negative (best) synergy
+          # For dissimilarity, we want the most positive (best) synergy
+          # The elbow is where additional regions stop providing improvement
+
+          d1 <- diff(y)  # First derivative (change in synergy)
+          d2 <- diff(d1) # Second derivative (change in rate of change)
+
+          # Elbow is where the rate of change changes most dramatically
+          elbow_idx <- which.max(abs(d2)) + 1
+
+          list(
+            elbow_size = summary_df$size[elbow_idx],
+            elbow_idx = elbow_idx
+          )
+        }
+
+        dissim_elbow <- if(nrow(dissim_by_size) >= 2) find_elbow(dissim_by_size, "dissimilarity") else list(elbow_size = 2, elbow_idx = 1)
+        sim_elbow <- if(nrow(sim_by_size) >= 2) find_elbow(sim_by_size, "similarity") else list(elbow_size = 2, elbow_idx = 1)
+
+        # Recommended max size is the larger of the two elbows
+        recommended_size <- max(dissim_elbow$elbow_size, sim_elbow$elbow_size, na.rm = TRUE)
+
+        setProgress(1, detail = "Complete!")
+
+        # Store results
+        ui_state$elbow_analysis <- list(
+          dissim_by_size = dissim_by_size,
+          sim_by_size = sim_by_size,
+          dissim_elbow = dissim_elbow,
+          sim_elbow = sim_elbow,
+          recommended_size = recommended_size,
+          n_nodes = n_nodes,
+          total_combos = total_combos
+        )
+
+        showNotification(
+          paste0("Elbow analysis complete! Recommended max size: ", recommended_size, " regions"),
+          type = "message", duration = 5
+        )
+      })
+
+    }, error = function(e) {
+      showNotification(paste("Elbow analysis error:", e$message), type = "error", duration = 10)
+      print(paste("Elbow analysis error:", e$message))
+    })
+  })
+
+  # Apply elbow result to max combo size input
+  observeEvent(input$apply_elbow_result, {
+    req(ui_state$elbow_analysis)
+    updateNumericInput(session, "discovery_max_combo_size",
+                       value = ui_state$elbow_analysis$recommended_size)
+    showNotification(
+      paste0("Applied recommended size: ", ui_state$elbow_analysis$recommended_size, " regions"),
+      type = "message", duration = 3
+    )
+  })
+
+  # Render elbow plot
+  output$elbow_plot <- renderPlot({
+    req(ui_state$elbow_analysis)
+
+    elbow <- ui_state$elbow_analysis
+
+    par(mfrow = c(1, 2), mar = c(4, 4, 2, 1), cex = 0.9)
+
+    # Dissimilarity plot
+    if(nrow(elbow$dissim_by_size) > 0) {
+      plot(elbow$dissim_by_size$size, elbow$dissim_by_size$synergy,
+           type = "b", pch = 19, col = "#e74c3c",
+           xlab = "Combination Size", ylab = "Best Synergy",
+           main = "Dissimilarity", las = 1)
+      if(!is.null(elbow$dissim_elbow$elbow_size)) {
+        abline(v = elbow$dissim_elbow$elbow_size, col = "#e74c3c", lty = 2, lwd = 2)
+      }
+    } else {
+      plot.new()
+      text(0.5, 0.5, "No dissimilarity\nresults", cex = 1.2)
+    }
+
+    # Similarity plot
+    if(nrow(elbow$sim_by_size) > 0) {
+      plot(elbow$sim_by_size$size, elbow$sim_by_size$synergy,
+           type = "b", pch = 19, col = "#3498db",
+           xlab = "Combination Size", ylab = "Best Synergy",
+           main = "Similarity", las = 1)
+      if(!is.null(elbow$sim_elbow$elbow_size)) {
+        abline(v = elbow$sim_elbow$elbow_size, col = "#3498db", lty = 2, lwd = 2)
+      }
+    } else {
+      plot.new()
+      text(0.5, 0.5, "No similarity\nresults", cex = 1.2)
+    }
+  })
+
+  # Render elbow recommendation text
+  output$elbow_recommendation <- renderUI({
+    req(ui_state$elbow_analysis)
+
+    elbow <- ui_state$elbow_analysis
+
+    tags$div(
+      style = "font-size: 0.9em;",
+      tags$strong("Recommended: ", style = "color: #28a745;"),
+      tags$span(paste0(elbow$recommended_size, " regions"), style = "font-weight: bold;"),
+      tags$br(),
+      tags$small(
+        paste0("(Dissim elbow: ", elbow$dissim_elbow$elbow_size,
+               ", Sim elbow: ", elbow$sim_elbow$elbow_size, ")"),
+        style = "color: #666;"
+      )
     )
   })
 
