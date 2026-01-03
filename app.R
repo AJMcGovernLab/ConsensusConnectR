@@ -11073,14 +11073,6 @@ server <- function(input, output, session) {
     top_dissim <- discovery$top_dissimilarity
     top_sim <- discovery$top_similarity
 
-    # DEBUG: Print column names to verify synergy exists
-    message("[DEBUG Plot] top_dissim columns: ", paste(names(top_dissim), collapse=", "))
-    message("[DEBUG Plot] 'synergy' in names: ", "synergy" %in% names(top_dissim))
-    if("synergy" %in% names(top_dissim) && nrow(top_dissim) > 0) {
-      message("[DEBUG Plot] synergy values (first 10): ", paste(head(top_dissim$synergy, 10), collapse=", "))
-      message("[DEBUG Plot] size values (first 10): ", paste(head(top_dissim$size, 10), collapse=", "))
-    }
-
     # Filter for FDR-significant AND synergistic/additive (non-redundant)
     # For singles, always include if significant
     # For multi-region, require synergy >= 0 (dissim) or <= 0 (sim) to exclude redundant
@@ -11103,13 +11095,7 @@ server <- function(input, output, session) {
           # Multi-region: require synergy >= 0 (synergistic or additive)
           is_single <- sig_d$size == 1
           is_synergistic <- !is.na(sig_d$synergy) & sig_d$synergy >= 0
-          message("[DEBUG Plot] Before filter: ", nrow(sig_d), " rows")
-          message("[DEBUG Plot] Singles: ", sum(is_single), ", Synergistic: ", sum(is_synergistic, na.rm=TRUE))
-          message("[DEBUG Plot] Keeping: ", sum(is_single | is_synergistic), " rows")
           sig_d <- sig_d[is_single | is_synergistic, ]
-          message("[DEBUG Plot] After filter: ", nrow(sig_d), " rows")
-        } else {
-          message("[DEBUG Plot] WARNING: No synergy column found - no filtering applied!")
         }
         if(nrow(sig_d) > 0) {
           sig_d$direction <- "Dissimilarity"
@@ -11135,25 +11121,13 @@ server <- function(input, output, session) {
           # Multi-region: require synergy <= 0 (synergistic or additive for similarity)
           is_single <- sig_s$size == 1
           is_synergistic <- !is.na(sig_s$synergy) & sig_s$synergy <= 0
-          message("[DEBUG Plot SIM] Before filter: ", nrow(sig_s), " rows")
-          message("[DEBUG Plot SIM] Singles: ", sum(is_single), ", Synergistic: ", sum(is_synergistic, na.rm=TRUE))
           sig_s <- sig_s[is_single | is_synergistic, ]
-          message("[DEBUG Plot SIM] After filter: ", nrow(sig_s), " rows")
-        } else {
-          message("[DEBUG Plot SIM] WARNING: No synergy column found!")
         }
         if(nrow(sig_s) > 0) {
           sig_s$direction <- "Similarity"
           sig_nonredundant <- rbind(sig_nonredundant, sig_s)
         }
       }
-    }
-
-    message("[DEBUG Plot FINAL] Total rows to plot: ", nrow(sig_nonredundant))
-    if(nrow(sig_nonredundant) > 0) {
-      message("[DEBUG Plot FINAL] Nodes: ", paste(head(sig_nonredundant$nodes, 10), collapse=", "))
-      message("[DEBUG Plot FINAL] Synergy: ", paste(head(sig_nonredundant$synergy, 10), collapse=", "))
-      message("[DEBUG Plot FINAL] Size: ", paste(head(sig_nonredundant$size, 10), collapse=", "))
     }
 
     if(nrow(sig_nonredundant) == 0) {
@@ -11308,14 +11282,25 @@ server <- function(input, output, session) {
         )
 
         # Add synergy interpretation column for display
-        display_df$Synergy_Type <- sapply(display_df$Synergy, function(s) {
+        # NOTE: Synergy interpretation depends on direction!
+        # - Dissimilarity: synergy > 0 = Synergistic (more dissimilar than expected)
+        # - Similarity: synergy < 0 = Synergistic (more similar than expected)
+        display_df$Synergy_Type <- mapply(function(s, dir) {
           if(s == "-") return("-")
           s_num <- as.numeric(s)
           if(is.na(s_num)) return("-")
-          if(s_num > 0.001) return("Synergistic")
-          if(s_num < -0.001) return("Redundant")
+
+          if(dir == "Dissimilarity") {
+            # For dissimilarity: positive synergy = synergistic
+            if(s_num > 0.001) return("Synergistic")
+            if(s_num < -0.001) return("Redundant")
+          } else {
+            # For similarity: negative synergy = synergistic (more similar than expected)
+            if(s_num < -0.001) return("Synergistic")
+            if(s_num > 0.001) return("Redundant")
+          }
           return("Additive")
-        })
+        }, display_df$Synergy, display_df$Direction)
 
         return(DT::datatable(
           display_df,
