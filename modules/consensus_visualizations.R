@@ -1377,19 +1377,24 @@ plot_contribution_network_single <- function(avg_cor, node_summary, brain_areas 
 #' Plot Dual Correlation Networks (Group 1 vs Group 2) - Side by Side
 #'
 #' Creates side-by-side correlation network plots for each group, with nodes
-#' colored by brain area and edges showing correlation strength. Edges are
-#' highlighted to show shared vs unique connections.
+#' colored by brain area and edges colored by similarity/dissimilarity.
+#' Blue edges = similar (shared), Red edges = dissimilar (unique to group).
 #'
 #' @param group1_cor Correlation matrix for Group 1
 #' @param group2_cor Correlation matrix for Group 2
 #' @param node_summary Data frame from compute_node_contribution_summary()
 #' @param group1_name Name of Group 1
 #' @param group2_name Name of Group 2
-#' @param brain_areas Named vector mapping regions to brain areas
+#' @param brain_areas List mapping area names to region vectors
+#' @param area_colors Named vector of colors for each brain area
+#' @param threshold1 Percolation threshold for Group 1 (NULL = use median)
+#' @param threshold2 Percolation threshold for Group 2 (NULL = use median)
 #' @param layout Layout type: "fr", "circle", or "kk"
 plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
                                            group1_name = "Group 1", group2_name = "Group 2",
-                                           brain_areas = NULL, layout = "fr") {
+                                           brain_areas = NULL, area_colors = NULL,
+                                           threshold1 = NULL, threshold2 = NULL,
+                                           layout = "fr") {
 
   if(!requireNamespace("igraph", quietly = TRUE)) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -1445,11 +1450,25 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
   diag(abs_cor1) <- 0
   diag(abs_cor2) <- 0
 
-  # Threshold at median to keep top 50% of edges
+  # Use percolation thresholds if provided, otherwise fallback to median
   nz_vals1 <- abs_cor1[abs_cor1 > 0]
   nz_vals2 <- abs_cor2[abs_cor2 > 0]
-  thresh1 <- if(length(nz_vals1) > 0) quantile(nz_vals1, 0.5, na.rm = TRUE) else 0
-  thresh2 <- if(length(nz_vals2) > 0) quantile(nz_vals2, 0.5, na.rm = TRUE) else 0
+
+  thresh1 <- if(!is.null(threshold1)) {
+    threshold1
+  } else if(length(nz_vals1) > 0) {
+    quantile(nz_vals1, 0.5, na.rm = TRUE)
+  } else {
+    0
+  }
+
+  thresh2 <- if(!is.null(threshold2)) {
+    threshold2
+  } else if(length(nz_vals2) > 0) {
+    quantile(nz_vals2, 0.5, na.rm = TRUE)
+  } else {
+    0
+  }
 
   # Binary adjacency for edge classification
   binary1 <- (abs_cor1 >= thresh1) * 1
@@ -1488,27 +1507,9 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
     return()
   }
 
-  # Brain area color palette
-  brain_area_colors <- c(
-    "Cortex" = "#E41A1C",
-    "Hippocampus" = "#377EB8",
-    "Thalamus" = "#4DAF4A",
-    "Hypothalamus" = "#984EA3",
-    "Midbrain" = "#FF7F00",
-    "Striatum" = "#FFFF33",
-    "Amygdala" = "#A65628",
-    "Cerebellum" = "#F781BF",
-    "Basal Forebrain" = "#999999",
-    "Pallidum" = "#66C2A5",
-    "Pons" = "#FC8D62",
-    "Medulla" = "#8DA0CB",
-    "Olfactory" = "#E78AC3",
-    "Other" = "#A6D854"
-  )
-
-  # Assign node colors by brain area
+  # Assign node colors by brain area using user-provided colors
   # brain_areas is a list: list("AreaName" = c("region1", "region2"), ...)
-  # We need to invert it to find which area each region belongs to
+  # area_colors is a named vector: c("AreaName" = "#color", ...)
   if(!is.null(brain_areas) && length(brain_areas) > 0 && is.list(brain_areas)) {
     # Create region -> area mapping
     region_to_area <- character()
@@ -1521,13 +1522,19 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
       }
     }
 
+    # Use user-provided area_colors if available
     node_colors <- sapply(node_names, function(n) {
       area <- region_to_area[n]
       if(is.na(area) || is.null(area)) area <- "Other"
-      col <- brain_area_colors[area]
-      if(is.na(col)) col <- brain_area_colors["Other"]
-      return(col)
+
+      # Try user-provided colors first
+      if(!is.null(area_colors) && area %in% names(area_colors)) {
+        return(area_colors[[area]])
+      }
+      # Fallback to gray
+      return("#808080")
     })
+
     # Get unique brain areas present
     present_areas <- unique(sapply(node_names, function(n) {
       area <- region_to_area[n]
@@ -1556,7 +1563,8 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
   coords <- layout_fn(union_network)
 
   # Helper to compute edge properties
-  compute_edge_props <- function(network, cor_matrix, binary_this, binary_other, unique_color) {
+  # Blue = similar (shared), Red = dissimilar (unique)
+  compute_edge_props <- function(network, cor_matrix, binary_this, binary_other) {
     edge_list <- igraph::as_edgelist(network)
     if(nrow(edge_list) == 0) return(list(colors = character(0), widths = numeric(0)))
 
@@ -1580,11 +1588,11 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
         edge_widths[i] <- 1 + abs(cor_val) * 4
 
         if(in_other) {
-          # Shared edge - gray
-          edge_colors[i] <- adjustcolor("gray50", alpha.f = 0.5)
+          # SIMILAR edge (shared in both groups) - BLUE
+          edge_colors[i] <- "#3498DB"
         } else {
-          # Unique to this group - highlighted
-          edge_colors[i] <- unique_color
+          # DISSIMILAR edge (unique to this group) - RED
+          edge_colors[i] <- "#E74C3C"
         }
       }
     }
@@ -1592,8 +1600,8 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
   }
 
   # Get edge properties for each network
-  edges1 <- compute_edge_props(network1, abs_cor1, binary1, binary2, "#E74C3C")  # Red for G1-unique
-  edges2 <- compute_edge_props(network2, abs_cor2, binary2, binary1, "#3498DB")  # Blue for G2-unique
+  edges1 <- compute_edge_props(network1, abs_cor1, binary1, binary2)
+  edges2 <- compute_edge_props(network2, abs_cor2, binary2, binary1)
 
   # Set up side-by-side layout
   old_par <- par(no.readonly = TRUE)
@@ -1621,7 +1629,7 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
        edge.color = edges1$colors,
        main = group1_name)
 
-  mtext(sprintf("%d edges (%d unique, %d shared)", n_g1_total, n_g1_only, n_shared),
+  mtext(sprintf("%d edges (%d dissimilar, %d similar)", n_g1_total, n_g1_only, n_shared),
         side = 1, line = 0.5, cex = 0.7, col = "gray40")
 
   # Plot Group 2 network
@@ -1637,7 +1645,7 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
        edge.color = edges2$colors,
        main = group2_name)
 
-  mtext(sprintf("%d edges (%d unique, %d shared)", n_g2_total, n_g2_only, n_shared),
+  mtext(sprintf("%d edges (%d dissimilar, %d similar)", n_g2_total, n_g2_only, n_shared),
         side = 1, line = 0.5, cex = 0.7, col = "gray40")
 
   # Add legend panel
@@ -1645,9 +1653,13 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
     par(mar = c(0, 1, 0, 1))
     plot.new()
 
-    # Brain area legend
-    legend_colors <- brain_area_colors[present_areas]
-    legend_colors <- legend_colors[!is.na(legend_colors)]
+    # Brain area legend using user-provided colors
+    if(!is.null(area_colors)) {
+      legend_colors <- area_colors[present_areas]
+      legend_colors <- legend_colors[!is.na(legend_colors)]
+    } else {
+      legend_colors <- setNames(rep("#808080", length(present_areas)), present_areas)
+    }
 
     legend("left",
            legend = names(legend_colors),
@@ -1659,21 +1671,21 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
 
     # Edge legend
     legend("right",
-           legend = c(paste0("Unique to ", group1_name),
-                     paste0("Unique to ", group2_name),
-                     "Shared"),
-           col = c("#E74C3C", "#3498DB", "gray50"),
-           lwd = c(3, 3, 2),
+           legend = c("Dissimilar (unique)", "Similar (shared)"),
+           col = c("#E74C3C", "#3498DB"),
+           lwd = c(3, 3),
            title = "Edge Type",
            cex = 0.8,
            bty = "n")
   }
 
   # Overall title
-  mtext(sprintf("Correlation Networks (Jaccard Similarity: %.3f)", jaccard_similarity),
+  mtext(sprintf("Percolation Networks (Jaccard Similarity: %.3f)", jaccard_similarity),
         side = 3, outer = TRUE, cex = 1.0, font = 2)
 
-  # Bottom note
-  mtext("Edge width = correlation strength | Only regions from significant combinations shown",
-        side = 1, outer = TRUE, line = 0.5, cex = 0.75, col = "gray40")
+  # Bottom note with threshold info
+  thresh_info <- sprintf("Thresholds: %s=%.3f, %s=%.3f",
+                         group1_name, thresh1, group2_name, thresh2)
+  mtext(paste(thresh_info, "| Only regions from significant combinations"),
+        side = 1, outer = TRUE, line = 0.5, cex = 0.7, col = "gray40")
 }

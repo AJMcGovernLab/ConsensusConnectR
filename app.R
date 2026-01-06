@@ -11587,6 +11587,14 @@ server <- function(input, output, session) {
         return()
       }
 
+      # Get percolation thresholds for the two groups
+      thresh1 <- NULL
+      thresh2 <- NULL
+      if(!is.null(analysis_results$group_thresholds)) {
+        thresh1 <- analysis_results$group_thresholds[[results$group1_name]]
+        thresh2 <- analysis_results$group_thresholds[[results$group2_name]]
+      }
+
       plot_contribution_network_dual(
         group1_cor = results$group1_cor,
         group2_cor = results$group2_cor,
@@ -11594,6 +11602,9 @@ server <- function(input, output, session) {
         group1_name = results$group1_name,
         group2_name = results$group2_name,
         brain_areas = ui_state$brain_areas,
+        area_colors = ui_state$area_colors,
+        threshold1 = thresh1,
+        threshold2 = thresh2,
         layout = layout_type
       )
     }
