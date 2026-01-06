@@ -1143,6 +1143,36 @@ create_summary_ui <- function() {
                      increases group similarity), blue = similarity drivers. Redundant combinations (where combined effect is less than
                      the sum of individual effects) are excluded."),
                      style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
+              hr(),
+
+              # Part 5: Network Visualization of Regional Contributions
+              h6("Part 5: Network Visualization of Regional Contributions"),
+              tags$p(tags$em("Visualize which regions contribute to network similarity vs dissimilarity."),
+                     style = "font-size: 0.85em; color: #888;"),
+
+              fluidRow(
+                column(4,
+                  selectInput("contrib_viz_type", "Visualization Type:",
+                              choices = c("Single Network (Colored Nodes)" = "single",
+                                        "Dual Networks (Side-by-Side)" = "dual"),
+                              selected = "single"),
+                  checkboxInput("contrib_viz_sig_only", "Significant combinations only (p < 0.05)", TRUE),
+                  checkboxInput("contrib_viz_synergistic", "Synergistic combinations only", FALSE),
+                  selectInput("contrib_viz_layout", "Network Layout:",
+                              choices = c("Force-Directed" = "fr",
+                                        "Circular" = "circle",
+                                        "Kamada-Kawai" = "kk"),
+                              selected = "fr")
+                ),
+                column(8,
+                  downloadablePlotOutput("contributionNetworkPlot", height = "500px")
+                )
+              ),
+
+              tags$p(tags$em("Figure: Network visualization showing regional contributions to group similarity (blue) vs dissimilarity (red).
+                     Node size reflects frequency of appearance in significant combinations. Single network view uses a diverging color scale
+                     based on net direction; dual view shows intensity-based coloring for each direction separately."),
+                     style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
               hr()
             ),
 
@@ -2585,7 +2615,16 @@ create_results_ui <- function() {
                          style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
 
                   h5("Summary Statistics"),
-                  verbatimTextOutput("globalPermutationSummary")
+                  verbatimTextOutput("globalPermutationSummary"),
+
+                  hr(),
+
+                  h5("Download Results"),
+                  tags$p("Download all plots and data from this analysis as a ZIP file.",
+                         style = "font-size: 0.9em; color: #666;"),
+                  downloadButton("download_global_permutation_results",
+                                "Download All Results",
+                                class = "btn-success")
                 ),
 
                 tabPanel("Methods",
@@ -11470,6 +11509,97 @@ server <- function(input, output, session) {
     })
   })
 
+  # Output: Contribution Network Plot (regional contributions to similarity/dissimilarity)
+  output$contributionNetworkPlot <- renderPlot({
+    results <- regional_contribution_results()
+
+    # Check for artificial mode with brute force results
+    if(is.null(results) || is.null(results$mode) || results$mode != "artificial") {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "Run Artificial Brain Area Discovery first", cex = 1.1, col = "gray50")
+      return()
+    }
+
+    if(is.null(results$method) || results$method != "brute_force") {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "Brute force results not available", cex = 1.1, col = "gray50")
+      return()
+    }
+
+    discovery <- results$discovery
+    if(is.null(discovery)) {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "No discovery results available", cex = 1.1, col = "gray50")
+      return()
+    }
+
+    # Get filter settings from UI
+    sig_only <- input$contrib_viz_sig_only
+    synergistic_only <- input$contrib_viz_synergistic
+    viz_type <- input$contrib_viz_type
+    layout_type <- input$contrib_viz_layout
+
+    # Compute node contribution summary
+    node_summary <- compute_node_contribution_summary(
+      discovery,
+      sig_only = sig_only,
+      synergistic_only = synergistic_only
+    )
+
+    if(is.null(node_summary) || nrow(node_summary) == 0) {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      msg <- "No contributions found"
+      if(sig_only) msg <- paste(msg, "\n(try unchecking 'Significant only')")
+      if(synergistic_only) msg <- paste(msg, "\n(try unchecking 'Synergistic only')")
+      text(1, 1, msg, cex = 1.0, col = "gray50")
+      return()
+    }
+
+    # Create network from average correlation matrix
+    network <- NULL
+    if(!is.null(results$avg_cor)) {
+      # Create igraph network from correlation matrix
+      adj_mat <- abs(results$avg_cor)
+      diag(adj_mat) <- 0
+
+      # Threshold to keep only strong connections for visualization
+      threshold <- quantile(adj_mat[adj_mat > 0], 0.7, na.rm = TRUE)
+      adj_mat[adj_mat < threshold] <- 0
+
+      if(requireNamespace("igraph", quietly = TRUE)) {
+        network <- igraph::graph_from_adjacency_matrix(
+          adj_mat,
+          mode = "undirected",
+          weighted = TRUE,
+          diag = FALSE
+        )
+      }
+    }
+
+    if(is.null(network)) {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "Could not create network\n(correlation matrix not available)", cex = 1.0, col = "gray50")
+      return()
+    }
+
+    # Call appropriate plotting function
+    if(viz_type == "single") {
+      plot_contribution_network_single(
+        network = network,
+        node_summary = node_summary,
+        brain_areas = ui_state$brain_areas,
+        layout = layout_type
+      )
+    } else {
+      plot_contribution_network_dual(
+        network = network,
+        node_summary = node_summary,
+        brain_areas = ui_state$brain_areas,
+        layout = layout_type
+      )
+    }
+  })
+
   # Output: Results table
   output$regionalContributionTable <- DT::renderDataTable({
     results <- regional_contribution_results()
@@ -14578,6 +14708,167 @@ server <- function(input, output, session) {
     n_total <- sum(!is.na(global_results$p_values))
     cat(sprintf("\nSignificant metrics: %d / %d (%.1f%%)\n", n_sig, n_total, 100 * n_sig / n_total))
   })
+
+  # Download handler for Global Network Permutation Test results
+  output$download_global_permutation_results <- downloadHandler(
+    filename = function() {
+      paste0("GlobalNetworkPermutation_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".zip")
+    },
+    content = function(file) {
+      global_results <- global_permutation_results()
+
+      if(is.null(global_results)) {
+        showNotification("No results available to download. Run the analysis first.",
+                        type = "error", duration = 5)
+        return()
+      }
+
+      # Create temporary directory
+      temp_base <- tempfile(pattern = "GlobalPermutation_")
+      dir.create(temp_base, recursive = TRUE, showWarnings = FALSE)
+
+      tryCatch({
+        # ==========================================
+        # 1. SAVE PLOT AS PNG
+        # ==========================================
+        plot_file <- file.path(temp_base, "GlobalPermutationTest_NullDistributions.png")
+        png(plot_file, width = 12, height = 10, units = "in", res = 300)
+        render_global_permutation_results(global_results)
+        dev.off()
+
+        # ==========================================
+        # 2. SAVE RESULTS SUMMARY AS CSV
+        # ==========================================
+        # Create results summary table
+        metrics <- names(global_results$observed_diff)
+        results_df <- data.frame(
+          Metric = metrics,
+          Group1_Value = global_results$observed_group1[metrics],
+          Group2_Value = global_results$observed_group2[metrics],
+          Difference = global_results$observed_diff[metrics],
+          P_Value = global_results$p_values[metrics],
+          Significant = ifelse(global_results$p_values[metrics] < 0.05, "Yes", "No"),
+          stringsAsFactors = FALSE
+        )
+        rownames(results_df) <- NULL
+
+        # Add column names with group info
+        colnames(results_df)[2] <- paste0(global_results$group1_name, "_Value")
+        colnames(results_df)[3] <- paste0(global_results$group2_name, "_Value")
+
+        write.csv(results_df,
+                  file.path(temp_base, "GlobalPermutationTest_Results.csv"),
+                  row.names = FALSE)
+
+        # ==========================================
+        # 3. SAVE NULL DISTRIBUTIONS AS CSV
+        # ==========================================
+        if(!is.null(global_results$null_distributions)) {
+          null_df <- as.data.frame(global_results$null_distributions)
+          write.csv(null_df,
+                    file.path(temp_base, "GlobalPermutationTest_NullDistributions.csv"),
+                    row.names = FALSE)
+        }
+
+        # ==========================================
+        # 4. SAVE SUMMARY TEXT FILE
+        # ==========================================
+        summary_file <- file.path(temp_base, "GlobalPermutationTest_Summary.txt")
+        sink(summary_file)
+        cat("Global Network Permutation Test Summary\n")
+        cat("========================================\n\n")
+        cat(sprintf("Generated: %s\n\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S")))
+        cat(sprintf("Comparison: %s vs %s\n", global_results$group1_name, global_results$group2_name))
+        cat(sprintf("Correlation method: %s\n", global_results$correlation_method))
+        cat(sprintf("Network type: %s\n", if(is.null(global_results$threshold)) "Weighted" else sprintf("Binary (threshold = %.2f)", global_results$threshold)))
+        cat(sprintf("Number of permutations: %d\n", global_results$n_permutations))
+
+        cat("\n\nObserved Metrics:\n")
+        cat("-----------------\n")
+        cat(sprintf("\n%s:\n", global_results$group1_name))
+        for(metric in names(global_results$observed_group1)) {
+          val <- global_results$observed_group1[metric]
+          if(!is.na(val)) {
+            cat(sprintf("  %s: %.4f\n", metric, val))
+          }
+        }
+
+        cat(sprintf("\n%s:\n", global_results$group2_name))
+        for(metric in names(global_results$observed_group2)) {
+          val <- global_results$observed_group2[metric]
+          if(!is.na(val)) {
+            cat(sprintf("  %s: %.4f\n", metric, val))
+          }
+        }
+
+        cat("\n\nStatistical Results:\n")
+        cat("--------------------\n")
+        for(metric in names(global_results$observed_diff)) {
+          diff_val <- global_results$observed_diff[metric]
+          p_val <- global_results$p_values[metric]
+          if(!is.na(diff_val) && !is.na(p_val)) {
+            sig_marker <- if(p_val < 0.001) "***" else if(p_val < 0.01) "**" else if(p_val < 0.05) "*" else ""
+            cat(sprintf("%s: Difference = %.4f, p = %.4f %s\n", metric, diff_val, p_val, sig_marker))
+          }
+        }
+
+        cat("\nSignificance codes: *** p < 0.001, ** p < 0.01, * p < 0.05\n")
+
+        n_sig <- sum(global_results$p_values < 0.05, na.rm = TRUE)
+        n_total <- sum(!is.na(global_results$p_values))
+        cat(sprintf("\nSignificant metrics: %d / %d (%.1f%%)\n", n_sig, n_total, 100 * n_sig / n_total))
+
+        cat("\n\nInterpretation:\n")
+        cat("--------------\n")
+        if(n_sig > 0) {
+          cat("Significant differences were found in global network properties.\n")
+          cat("This suggests that the two groups have fundamentally different network architectures.\n")
+        } else {
+          cat("No significant differences were found in global network properties.\n")
+          cat("The two groups appear to have similar overall network organization.\n")
+        }
+
+        sink()
+
+        # ==========================================
+        # 5. CREATE ZIP FILE
+        # ==========================================
+        # Get list of all files to zip
+        files_to_zip <- list.files(temp_base, full.names = TRUE)
+        file_names <- basename(files_to_zip)
+
+        # Create zip
+        old_wd <- getwd()
+        setwd(temp_base)
+
+        zip_result <- utils::zip(
+          zipfile = file,
+          files = file_names,
+          flags = "-r9Xq"
+        )
+
+        setwd(old_wd)
+
+        if(zip_result != 0) {
+          # Fallback to tar.gz
+          tar_file <- sub("\\.zip$", ".tar.gz", file)
+          tar(tar_file, files = files_to_zip, compression = "gzip")
+          file.rename(tar_file, file)
+        }
+
+        showNotification("Download ready! ZIP file contains plot, data, and summary.",
+                        type = "message", duration = 3)
+
+      }, error = function(e) {
+        showNotification(paste("Error creating download:", e$message),
+                        type = "error", duration = 10)
+      }, finally = {
+        # Clean up temp directory
+        unlink(temp_base, recursive = TRUE)
+      })
+    },
+    contentType = "application/zip"
+  )
 
   # Removing old Tab 7c-7e placeholders below
 

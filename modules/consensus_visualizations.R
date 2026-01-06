@@ -1093,3 +1093,358 @@ render_network_similarity_heatmap_plot <- function(correlation_methods_raw,
   render_jaccard_heatmap(group_jaccard_matrix, all_groups,
                         title = paste("Group Similarity (Avg across", total_combinations, "combinations)"))
 }
+
+
+# ============================================================================
+# Visualization: Regional Contribution Network Plots
+# Shows which regions contribute to similarity vs dissimilarity
+# ============================================================================
+
+#' Compute Node Contribution Summary
+#'
+#' Analyzes brute force discovery results to compute how many times each node
+#' appears in similarity vs dissimilarity-driving combinations
+#'
+#' @param discovery_results The brute force discovery results object
+#' @param sig_only If TRUE, only include significant combinations (p < 0.05)
+#' @param synergistic_only If TRUE, only include synergistic combinations
+#' @return Data frame with node-level contribution summary
+compute_node_contribution_summary <- function(discovery_results, sig_only = TRUE, synergistic_only = FALSE) {
+
+  if(is.null(discovery_results)) return(NULL)
+
+  # Get similarity and dissimilarity results
+  sim_results <- discovery_results$top_similarity
+  dissim_results <- discovery_results$top_dissimilarity
+
+  if(is.null(sim_results) && is.null(dissim_results)) return(NULL)
+
+  # Initialize empty data frames if needed
+  if(is.null(sim_results)) {
+    sim_results <- data.frame(nodes_list = I(list()), significant = logical(0),
+                              synergy = numeric(0), contribution = numeric(0))
+  }
+  if(is.null(dissim_results)) {
+    dissim_results <- data.frame(nodes_list = I(list()), significant = logical(0),
+                                  synergy = numeric(0), contribution = numeric(0))
+  }
+
+  # Filter if requested
+  if(sig_only && nrow(sim_results) > 0) {
+    if("significant" %in% names(sim_results)) {
+      sim_results <- sim_results[!is.na(sim_results$significant) & sim_results$significant == TRUE, , drop = FALSE]
+    }
+  }
+  if(sig_only && nrow(dissim_results) > 0) {
+    if("significant" %in% names(dissim_results)) {
+      dissim_results <- dissim_results[!is.na(dissim_results$significant) & dissim_results$significant == TRUE, , drop = FALSE]
+    }
+  }
+
+  if(synergistic_only && nrow(sim_results) > 0) {
+    if("synergy" %in% names(sim_results)) {
+      # For similarity: negative synergy = synergistic (actual > expected)
+      sim_results <- sim_results[!is.na(sim_results$synergy) & sim_results$synergy < 0, , drop = FALSE]
+    }
+  }
+  if(synergistic_only && nrow(dissim_results) > 0) {
+    if("synergy" %in% names(dissim_results)) {
+      # For dissimilarity: positive synergy = synergistic (actual > expected)
+      dissim_results <- dissim_results[!is.na(dissim_results$synergy) & dissim_results$synergy > 0, , drop = FALSE]
+    }
+  }
+
+  # Collect all unique nodes
+  sim_nodes_list <- if(nrow(sim_results) > 0 && "nodes_list" %in% names(sim_results)) {
+    sim_results$nodes_list
+  } else list()
+
+  dissim_nodes_list <- if(nrow(dissim_results) > 0 && "nodes_list" %in% names(dissim_results)) {
+    dissim_results$nodes_list
+  } else list()
+
+  all_nodes <- unique(c(
+    unlist(sim_nodes_list),
+    unlist(dissim_nodes_list)
+  ))
+
+  if(length(all_nodes) == 0) return(NULL)
+
+  # Build node summary
+  node_summary <- data.frame(
+    node = all_nodes,
+    sim_count = 0,
+    dissim_count = 0,
+    sim_contribution = 0,
+    dissim_contribution = 0,
+    stringsAsFactors = FALSE
+  )
+
+  for(i in seq_along(all_nodes)) {
+    node <- all_nodes[i]
+
+    # Similarity combinations containing this node
+    if(length(sim_nodes_list) > 0) {
+      sim_matches <- sapply(sim_nodes_list, function(x) node %in% x)
+      node_summary$sim_count[i] <- sum(sim_matches)
+      if(sum(sim_matches) > 0 && "contribution" %in% names(sim_results)) {
+        node_summary$sim_contribution[i] <- sum(abs(sim_results$contribution[sim_matches]), na.rm = TRUE)
+      }
+    }
+
+    # Dissimilarity combinations containing this node
+    if(length(dissim_nodes_list) > 0) {
+      dissim_matches <- sapply(dissim_nodes_list, function(x) node %in% x)
+      node_summary$dissim_count[i] <- sum(dissim_matches)
+      if(sum(dissim_matches) > 0 && "contribution" %in% names(dissim_results)) {
+        node_summary$dissim_contribution[i] <- sum(abs(dissim_results$contribution[dissim_matches]), na.rm = TRUE)
+      }
+    }
+  }
+
+  # Compute net direction
+  node_summary$net_count <- node_summary$dissim_count - node_summary$sim_count
+  node_summary$total_count <- node_summary$dissim_count + node_summary$sim_count
+
+  # Direction ratio: -1 (all similarity) to +1 (all dissimilarity)
+  node_summary$direction_ratio <- ifelse(
+    node_summary$total_count > 0,
+    node_summary$net_count / node_summary$total_count,
+    0
+  )
+
+  return(node_summary)
+}
+
+
+#' Plot Single Contribution Network
+#'
+#' Creates a network plot with nodes colored by their contribution direction
+#' Blue = similarity drivers, Red = dissimilarity drivers
+#'
+#' @param network igraph network object
+#' @param node_summary Data frame from compute_node_contribution_summary()
+#' @param brain_areas Named vector mapping regions to brain areas
+#' @param layout Layout type: "fr", "circle", or "kk"
+plot_contribution_network_single <- function(network, node_summary, brain_areas = NULL, layout = "fr") {
+
+  if(!requireNamespace("igraph", quietly = TRUE)) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "igraph package required", cex = 1.2, col = "red")
+    return()
+  }
+
+  if(is.null(network) || igraph::vcount(network) == 0) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "No network available", cex = 1.2, col = "gray50")
+    return()
+  }
+
+  if(is.null(node_summary) || nrow(node_summary) == 0) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "No contribution data available\n(run brute force analysis first)", cex = 1.1, col = "gray50")
+    return()
+  }
+
+  # Color function based on direction ratio
+  get_node_color <- function(ratio) {
+    if(is.na(ratio) || ratio == 0) return("#808080")  # Gray for no contribution
+
+    if(ratio < -0.3) return("#2166AC")       # Strong similarity (dark blue)
+    if(ratio < 0) return("#67A9CF")           # Weak similarity (light blue)
+    if(ratio > 0.3) return("#B2182B")         # Strong dissimilarity (dark red)
+    if(ratio > 0) return("#EF8A62")           # Weak dissimilarity (light red)
+    return("#D1D1D1")                         # Balanced (light gray)
+  }
+
+  # Match node summary to network nodes
+  node_names <- igraph::V(network)$name
+  if(is.null(node_names)) node_names <- paste0("V", 1:igraph::vcount(network))
+
+  node_colors <- sapply(node_names, function(n) {
+    idx <- which(node_summary$node == n)
+    if(length(idx) == 0) return("#E0E0E0")  # Not in any combination
+    get_node_color(node_summary$direction_ratio[idx])
+  })
+
+  # Node size based on total involvement
+  node_sizes <- sapply(node_names, function(n) {
+    idx <- which(node_summary$node == n)
+    if(length(idx) == 0) return(5)
+    5 + sqrt(node_summary$total_count[idx]) * 3
+  })
+
+  # Set vertex attributes
+  igraph::V(network)$color <- node_colors
+  igraph::V(network)$size <- node_sizes
+
+  # Compute layout
+  layout_fn <- switch(layout,
+                      "fr" = igraph::layout_with_fr,
+                      "circle" = igraph::layout_in_circle,
+                      "kk" = igraph::layout_with_kk,
+                      igraph::layout_with_fr
+  )
+
+  coords <- layout_fn(network)
+
+  # Edge styling
+  edge_weights <- igraph::E(network)$weight
+  if(is.null(edge_weights)) edge_weights <- rep(0.5, igraph::ecount(network))
+  edge_widths <- pmax(0.5, abs(edge_weights) * 1.5)
+
+  # Plot
+  par(mar = c(1, 1, 3, 1))
+  plot(network,
+       layout = coords,
+       vertex.label = node_names,
+       vertex.label.cex = 0.65,
+       vertex.label.color = "black",
+       vertex.frame.color = "gray40",
+       edge.width = edge_widths,
+       edge.color = adjustcolor("gray50", alpha.f = 0.4),
+       main = "Regional Contributions to Network Similarity/Dissimilarity")
+
+  # Add legend
+  legend("bottomleft",
+         legend = c("Strong Similarity", "Weak Similarity", "Balanced/None",
+                    "Weak Dissimilarity", "Strong Dissimilarity", "Not in Results"),
+         fill = c("#2166AC", "#67A9CF", "#D1D1D1", "#EF8A62", "#B2182B", "#E0E0E0"),
+         title = "Contribution Direction",
+         cex = 0.7,
+         bg = "white")
+}
+
+
+#' Plot Dual Contribution Networks
+#'
+#' Creates side-by-side network plots showing similarity and dissimilarity
+#' contributors separately
+#'
+#' @param network igraph network object
+#' @param node_summary Data frame from compute_node_contribution_summary()
+#' @param brain_areas Named vector mapping regions to brain areas
+#' @param layout Layout type: "fr", "circle", or "kk"
+plot_contribution_network_dual <- function(network, node_summary, brain_areas = NULL, layout = "fr") {
+
+  if(!requireNamespace("igraph", quietly = TRUE)) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "igraph package required", cex = 1.2, col = "red")
+    return()
+  }
+
+  if(is.null(network) || igraph::vcount(network) == 0) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "No network available", cex = 1.2, col = "gray50")
+    return()
+  }
+
+  if(is.null(node_summary) || nrow(node_summary) == 0) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "No contribution data available\n(run brute force analysis first)", cex = 1.1, col = "gray50")
+    return()
+  }
+
+  # Set up dual panel layout
+  par(mfrow = c(1, 2), mar = c(2, 1, 3, 1), oma = c(0, 0, 2, 0))
+
+  # Get consistent layout for both plots
+  layout_fn <- switch(layout,
+                      "fr" = igraph::layout_with_fr,
+                      "circle" = igraph::layout_in_circle,
+                      "kk" = igraph::layout_with_kk,
+                      igraph::layout_with_fr
+  )
+
+  # Use seed for reproducible force-directed layouts
+  set.seed(42)
+  coords <- layout_fn(network)
+
+  node_names <- igraph::V(network)$name
+  if(is.null(node_names)) node_names <- paste0("V", 1:igraph::vcount(network))
+
+  # Edge styling
+  edge_weights <- igraph::E(network)$weight
+  if(is.null(edge_weights)) edge_weights <- rep(0.5, igraph::ecount(network))
+  edge_widths <- pmax(0.3, abs(edge_weights) * 1.2)
+
+  # --- LEFT PLOT: Similarity Contributors ---
+  max_sim_count <- max(node_summary$sim_count, 1, na.rm = TRUE)
+
+  sim_colors <- sapply(node_names, function(n) {
+    idx <- which(node_summary$node == n)
+    if(length(idx) == 0 || node_summary$sim_count[idx] == 0) return("#E8E8E8")
+    # Intensity based on count
+    intensity <- min(1, node_summary$sim_count[idx] / max_sim_count)
+    colorRampPalette(c("#DEEBF7", "#2166AC"))(100)[ceiling(intensity * 99) + 1]
+  })
+
+  sim_sizes <- sapply(node_names, function(n) {
+    idx <- which(node_summary$node == n)
+    if(length(idx) == 0 || node_summary$sim_count[idx] == 0) return(4)
+    4 + sqrt(node_summary$sim_count[idx]) * 4
+  })
+
+  igraph::V(network)$color <- sim_colors
+  igraph::V(network)$size <- sim_sizes
+
+  plot(network, layout = coords,
+       vertex.label = node_names,
+       vertex.label.cex = 0.55,
+       vertex.label.color = "black",
+       vertex.frame.color = adjustcolor("gray50", alpha.f = 0.5),
+       edge.width = edge_widths,
+       edge.color = adjustcolor("gray60", alpha.f = 0.35),
+       main = "Similarity Contributors")
+
+  # Left legend
+  legend("bottomleft",
+         legend = c(paste0("High (", max_sim_count, ")"), "Low (1)", "None"),
+         fill = c("#2166AC", "#DEEBF7", "#E8E8E8"),
+         title = "Count",
+         cex = 0.6,
+         bg = "white")
+
+  # --- RIGHT PLOT: Dissimilarity Contributors ---
+  max_dissim_count <- max(node_summary$dissim_count, 1, na.rm = TRUE)
+
+  dissim_colors <- sapply(node_names, function(n) {
+    idx <- which(node_summary$node == n)
+    if(length(idx) == 0 || node_summary$dissim_count[idx] == 0) return("#E8E8E8")
+    intensity <- min(1, node_summary$dissim_count[idx] / max_dissim_count)
+    colorRampPalette(c("#FEE0D2", "#B2182B"))(100)[ceiling(intensity * 99) + 1]
+  })
+
+  dissim_sizes <- sapply(node_names, function(n) {
+    idx <- which(node_summary$node == n)
+    if(length(idx) == 0 || node_summary$dissim_count[idx] == 0) return(4)
+    4 + sqrt(node_summary$dissim_count[idx]) * 4
+  })
+
+  igraph::V(network)$color <- dissim_colors
+  igraph::V(network)$size <- dissim_sizes
+
+  plot(network, layout = coords,
+       vertex.label = node_names,
+       vertex.label.cex = 0.55,
+       vertex.label.color = "black",
+       vertex.frame.color = adjustcolor("gray50", alpha.f = 0.5),
+       edge.width = edge_widths,
+       edge.color = adjustcolor("gray60", alpha.f = 0.35),
+       main = "Dissimilarity Contributors")
+
+  # Right legend
+  legend("bottomleft",
+         legend = c(paste0("High (", max_dissim_count, ")"), "Low (1)", "None"),
+         fill = c("#B2182B", "#FEE0D2", "#E8E8E8"),
+         title = "Count",
+         cex = 0.6,
+         bg = "white")
+
+  # Overall title
+  mtext("Regional Contributions to Network Similarity vs Dissimilarity",
+        outer = TRUE, cex = 1.1, font = 2, line = 0.5)
+
+  # Reset layout
+  par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1, oma = c(0, 0, 0, 0))
+}
