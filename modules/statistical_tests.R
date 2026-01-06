@@ -672,30 +672,17 @@ calibrate_parallel_performance <- function(analysis_results,
   }
 
   # =========================================================================
-  # R FALLBACK CALIBRATION (when C++ not available)
+  # R SERIAL FALLBACK (when C++ not available)
   # =========================================================================
-  if (verbose) message("Using R backend for calibration...")
+  # NOTE: R parallel workers (furrr/future) have been removed.
+  # Only C++ OpenMP parallelization is supported for performance.
+  # If C++ is not available, fall back to serial R processing.
 
-  # Determine target worker count with safety caps for R connection limits
-  max_safe_workers <- min(
-    parallelly::availableCores(omit = 1),
-    parallelly::freeConnections() - 4,  # Leave connections for safety
-    60  # Hard cap - diminishing returns above this
-  )
-  max_safe_workers <- max(1, max_safe_workers)
+  if (verbose) message("C++ backend not available - using R serial fallback...")
+  if (verbose) message("  For best performance, ensure Rcpp and RcppArmadillo are installed")
 
-  if (is.null(target_workers) || target_workers == "auto") {
-    target_workers <- max_safe_workers
-  } else {
-    target_workers <- as.integer(target_workers)
-  }
-  # Ensure target_workers doesn't exceed safe limit
-  target_workers <- min(target_workers, max_safe_workers)
-
-  if (verbose) message("Target worker count: ", target_workers)
-
-  # Phase 1: Measure serial computation time
-  if (verbose) message("Phase 1: Measuring R serial computation time...")
+  # Measure serial computation time
+  if (verbose) message("Measuring R serial computation time...")
 
   start_serial <- Sys.time()
   for (i in 1:n_calibration_perms) {
@@ -709,104 +696,8 @@ calibrate_parallel_performance <- function(analysis_results,
 
   if (verbose) message("  R serial time per permutation: ", round(time_per_perm_ms, 2), " ms")
 
-  # Phase 2: Measure parallel overhead for target worker count only
-  parallel_results <- list()
-
-  if (PARALLEL_AVAILABLE && target_workers > 1) {
-    if (verbose) message("Phase 2: Measuring R parallel overhead for ", target_workers, " workers...")
-
-    n_w <- target_workers
-    if (verbose) message("  Testing ", n_w, " workers...")
-
-      tryCatch({
-        # Time worker startup
-        start_spawn <- Sys.time()
-        old_plan <- future::plan()
-        future::plan(future::multisession, workers = n_w)
-
-        # Force worker initialization with minimal task (measures spawn time)
-        warmup <- furrr::future_map(1:n_w, function(i) Sys.getpid(),
-                                     .options = furrr::furrr_options(seed = TRUE))
-        spawn_time_ms <- as.numeric(difftime(Sys.time(), start_spawn, units = "secs")) * 1000
-
-        # Time actual parallel execution with same workload
-        start_parallel <- Sys.time()
-        parallel_results_inner <- furrr::future_map_dbl(
-          1:n_calibration_perms,
-          function(i) {
-            perm_idx <- sample(n_nodes)
-            permuted_g1 <- lapply(networks_g1, function(m) m[perm_idx, perm_idx])
-            permuted_g2 <- lapply(networks_g2, function(m) m[perm_idx, perm_idx])
-            result <- compute_averaged_jaccard(permuted_g1, permuted_g2, exclude_nodes = NULL)
-            return(result$avg_jaccard)
-          },
-          .options = furrr::furrr_options(
-            seed = TRUE,
-            globals = list(
-              compute_averaged_jaccard = compute_averaged_jaccard,
-              compute_jaccard_for_contribution = compute_jaccard_for_contribution,
-              networks_g1 = networks_g1,
-              networks_g2 = networks_g2,
-              n_nodes = n_nodes
-            )
-          )
-        )
-        parallel_time_ms <- as.numeric(difftime(Sys.time(), start_parallel, units = "secs")) * 1000
-
-        future::plan(old_plan)
-
-        total_time_ms <- spawn_time_ms + parallel_time_ms
-        effective_speedup <- serial_elapsed_ms / total_time_ms
-
-        parallel_results[[as.character(n_w)]] <- list(
-          workers = n_w,
-          spawn_time_ms = spawn_time_ms,
-          parallel_time_ms = parallel_time_ms,
-          total_time_ms = total_time_ms,
-          effective_speedup = effective_speedup,
-          spawn_per_worker_ms = spawn_time_ms / n_w
-        )
-
-        if (verbose) {
-          message(sprintf("    spawn=%.0fms (%.0fms/worker), compute=%.0fms, total=%.0fms, speedup=%.2fx",
-                          spawn_time_ms, spawn_time_ms/n_w, parallel_time_ms, total_time_ms, effective_speedup))
-        }
-      }, error = function(e) {
-        if (verbose) message("    Error testing ", n_w, " workers: ", e$message)
-        # Restore plan on error
-        tryCatch(future::plan(old_plan), error = function(e2) NULL)
-      })
-  } else {
-    if (verbose) message("Phase 2: Skipped (parallel not available or target_workers = 1)")
-  }
-
-  # Get results for target worker count (if tested)
-  target_key <- as.character(target_workers)
-  target_result <- parallel_results[[target_key]]
-
-  # Calculate spawn overhead per worker
-  spawn_overhead_per_worker <- if (!is.null(target_result)) {
-    target_result$spawn_per_worker_ms
-  } else {
-    3000  # Default 3 seconds per worker on Windows
-  }
-
-  # Determine if parallel is beneficial (target workers must beat serial by >10%)
-  use_parallel <- !is.null(target_result) && target_result$effective_speedup > 1.1
-  effective_speedup <- if (!is.null(target_result)) target_result$effective_speedup else 1.0
-
-  recommendation <- if (!use_parallel) {
-    "R serial (parallel overhead too high) - consider installing Rcpp/RcppArmadillo for C++ backend"
-  } else {
-    sprintf("R parallel: %d workers for %.1fx speedup", target_workers, effective_speedup)
-  }
-
-  # Always return target_workers as optimal (that's what user selected/will use)
-  optimal_workers <- if (use_parallel) target_workers else 1
-
-  # ========== MEASURE ENUMERATION TIME (Phase 1 of brute force) ==========
-  # This measures time to compute Jaccard for one combination WITHOUT permutations
-  if (verbose) message("Phase 3: Measuring enumeration time...")
+  # Measure enumeration time
+  if (verbose) message("Measuring enumeration time...")
 
   networks_by_approach_g1 <- tryCatch(
     extract_networks_by_approach(group1, analysis_results, methods),
@@ -837,13 +728,13 @@ calibrate_parallel_performance <- function(analysis_results,
     if (verbose) message("  Enumeration time per combination: ", round(enum_time_per_combo_ms, 2), " ms")
   }
 
+  recommendation <- "R serial (C++ backend not available) - install Rcpp/RcppArmadillo for 50-100x speedup"
+
   if (verbose) {
     message("\nCalibration complete:")
+    message("  Backend: R serial (no parallelization)")
     message("  R serial time per perm: ", round(time_per_perm_ms, 2), " ms")
     message("  Enumeration time per combo: ", round(enum_time_per_combo_ms, 2), " ms")
-    message("  Target workers: ", target_workers)
-    message("  Spawn overhead/worker: ", round(spawn_overhead_per_worker, 0), " ms")
-    message("  Parallel beneficial: ", use_parallel)
     message("  Recommendation: ", recommendation)
   }
 
@@ -853,16 +744,15 @@ calibrate_parallel_performance <- function(analysis_results,
     n_nodes = n_nodes,
     n_matrices = n_matrices,
     n_calibration_perms = n_calibration_perms,
-    backend = "r_fallback",
-    parallel_results = parallel_results,
-    target_workers = target_workers,
-    optimal_workers = optimal_workers,
-    optimal_speedup = effective_speedup,
-    use_parallel = use_parallel,
-    spawn_overhead_per_worker_ms = spawn_overhead_per_worker,
+    backend = "r_serial",
+    parallel_results = list(),
+    target_workers = 1,
+    optimal_workers = 1,
+    optimal_speedup = 1.0,
+    use_parallel = FALSE,
+    spawn_overhead_per_worker_ms = 0,
     recommendation = recommendation,
     calibration_timestamp = Sys.time(),
-    # NEW: Enumeration time for Phase 1 estimation
     enum_time_per_combo_ms = enum_time_per_combo_ms
   )
 }
@@ -1213,17 +1103,13 @@ if(GLMNET_AVAILABLE) {
   suppressPackageStartupMessages(library(glmnet))
 }
 
-# Check for parallel processing packages (future/furrr/progressr)
-PARALLEL_AVAILABLE <- requireNamespace("future", quietly = TRUE) &&
-                       requireNamespace("furrr", quietly = TRUE)
+# NOTE: R parallel workers (future/furrr) have been REMOVED.
+# Only C++ OpenMP parallelization is used for performance-critical operations.
+# This provides 50-100x speedup without the overhead of R process spawning.
+# The PARALLEL_AVAILABLE variable is kept for backwards compatibility but is always FALSE.
+PARALLEL_AVAILABLE <- FALSE
 PROGRESSR_AVAILABLE <- requireNamespace("progressr", quietly = TRUE)
 
-if(PARALLEL_AVAILABLE) {
-  suppressPackageStartupMessages({
-    library(future)
-    library(furrr)
-  })
-}
 if(PROGRESSR_AVAILABLE) {
   suppressPackageStartupMessages({
     library(progressr)
@@ -2730,29 +2616,8 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
                                                                use_parallel = FALSE,
                                                                n_workers = NULL) {
 
-  # Setup parallel processing if requested
-  if(use_parallel && PARALLEL_AVAILABLE) {
-    # Determine number of workers (handle NULL, "auto", or numeric)
-    # Use parallelly::availableCores() but also enforce hard cap for R connection limits
-    # R has max 128 connections by default, need to leave some for other uses
-    max_safe_workers <- min(
-      parallelly::availableCores(omit = 1),
-      parallelly::freeConnections() - 4,  # Leave 4 connections for safety
-      60  # Hard cap - diminishing returns above this anyway
-    )
-    max_safe_workers <- max(1, max_safe_workers)  # Ensure at least 1
-
-    if(is.null(n_workers) || identical(n_workers, "auto") || !is.numeric(n_workers)) {
-      n_workers <- max_safe_workers
-    } else {
-      n_workers <- min(as.integer(n_workers), max_safe_workers)
-    }
-    # Set up future plan
-    old_plan <- future::plan()
-    future::plan(future::multisession, workers = n_workers)
-    # Ensure we restore the old plan when function exits
-    on.exit(future::plan(old_plan), add = TRUE)
-  }
+  # NOTE: R parallel workers have been removed. Only C++ OpenMP parallelization is used.
+  # The use_parallel and n_workers parameters are kept for backwards compatibility but are ignored.
 
   # SYMMETRIC: Sort groups alphabetically for internal processing
 
@@ -3827,18 +3692,15 @@ brute_force_discovery <- function(analysis_results,
 
   if(verbose) {
     message("[DEBUG brute_force] Starting brute_force_discovery")
-    message("[DEBUG brute_force] use_parallel = ", use_parallel)
-    message("[DEBUG brute_force] PARALLEL_AVAILABLE = ", PARALLEL_AVAILABLE)
-    message("[DEBUG brute_force] n_workers requested = ", n_workers)
+    # NOTE: R parallel workers have been removed. Only C++ OpenMP is used for parallelization.
+    message("[DEBUG brute_force] C++ backend available: ", exists("CPP_BACKEND_AVAILABLE") && CPP_BACKEND_AVAILABLE)
+    if(exists("CPP_OPENMP_THREADS")) {
+      message("[DEBUG brute_force] CPP_OPENMP_THREADS = ", CPP_OPENMP_THREADS)
+    }
     if(!is.null(calibration)) {
-      message("[DEBUG brute_force] Calibration data available: optimal_workers = ", calibration$optimal_workers)
+      message("[DEBUG brute_force] Calibration backend: ", calibration$backend)
     }
   }
-
-  # Adaptive parallel setup flag - will be determined after we know problem size
-  parallel_setup_deferred <- use_parallel && PARALLEL_AVAILABLE
-  actual_use_parallel <- FALSE
-  actual_n_workers <- 1
 
   # SYMMETRIC: Sort groups alphabetically for internal processing
   # This ensures the same seed produces identical results regardless of input order
@@ -4147,52 +4009,19 @@ brute_force_discovery <- function(analysis_results,
 
   # ========== DEFERRED PARALLEL SETUP ==========
   # Now that we know the problem size, determine optimal parallel configuration
-  # NOTE: If using C++ backend, we don't need R's parallel package at all!
+  # NOTE: R parallel workers have been removed. Only C++ OpenMP parallelization is used.
+  # If C++ backend is not available, fall back to serial R processing.
   total_candidates_to_test <- nrow(top_dissim) + nrow(top_sim)
   n_matrices_flat <- length(networks_flat_g1)
 
-  if(parallel_setup_deferred && total_candidates_to_test >= 3) {
-    # Use calibration data or heuristic to determine optimal workers
-    optimal_config <- determine_optimal_workers(
-      n_candidates = total_candidates_to_test,
-      n_permutations = n_permutations,
-      n_nodes = n_nodes,
-      n_matrices = n_matrices_flat,
-      calibration = calibration
-    )
-
-    if(verbose) {
-      message("[DEBUG brute_force] Optimal config: ", optimal_config$recommendation)
-      message("[DEBUG brute_force] Serial time estimate: ", round(optimal_config$serial_time_ms/1000, 1), " seconds")
-      message("[DEBUG brute_force] Parallel time estimate: ", round(optimal_config$parallel_time_ms/1000, 1), " seconds")
-    }
-
-    # Override n_workers with optimal value if not explicitly set, or if user requested "auto"
-    if(is.null(n_workers) || n_workers == "auto" || n_workers == 0) {
-      actual_n_workers <- optimal_config$optimal_workers
+  if(verbose) {
+    if(use_cpp_backend) {
+      message("[DEBUG brute_force] Using C++ backend with OpenMP threads: ", CPP_OPENMP_THREADS)
     } else {
-      actual_n_workers <- as.numeric(n_workers)
+      message("[DEBUG brute_force] C++ backend not available - using R serial processing")
+      message("[DEBUG brute_force] For 50-100x speedup, install Rcpp and RcppArmadillo")
     }
-
-    # Only use parallel if it's actually beneficial
-    actual_use_parallel <- optimal_config$should_use_parallel && actual_n_workers > 1
-
-    if(actual_use_parallel) {
-      if(verbose) {
-        message("[DEBUG brute_force] Setting up ADAPTIVE parallel with ", actual_n_workers, " workers")
-        message("[DEBUG brute_force] Expected speedup: ", round(optimal_config$expected_speedup, 1), "x")
-      }
-      old_plan <- future::plan()
-      future::plan(future::multisession, workers = actual_n_workers)
-      on.exit(future::plan(old_plan), add = TRUE)
-    } else {
-      if(verbose) {
-        message("[DEBUG brute_force] Parallel not beneficial - running SERIAL")
-        message("[DEBUG brute_force] Reason: ", optimal_config$recommendation)
-      }
-    }
-  } else if(parallel_setup_deferred) {
-    if(verbose) message("[DEBUG brute_force] Too few candidates (", total_candidates_to_test, ") - running SERIAL")
+    message("[DEBUG brute_force] Total candidates to test: ", total_candidates_to_test)
   }
 
   if(nrow(top_dissim) > 0) {
@@ -4236,128 +4065,8 @@ brute_force_discovery <- function(analysis_results,
         message("[DEBUG brute_force] Time: ", Sys.time())
       }
 
-    } else if(actual_use_parallel && nrow(top_dissim) >= 3) {
-      if(verbose) {
-        message("[DEBUG brute_force] Using PARALLEL for dissimilarity (", nrow(top_dissim), " candidates)")
-        message("[DEBUG brute_force] n_permutations = ", n_permutations)
-        message("[DEBUG brute_force] Total permutation tests: ", nrow(top_dissim) * n_permutations)
-        message("[DEBUG brute_force] Using ", actual_n_workers, " workers (adaptive selection)")
-        message("[DEBUG brute_force] Starting future_map_dbl for dissimilarity...")
-        message("[DEBUG brute_force] Time: ", Sys.time())
-      }
-
-      # Calculate progress parameters
-      total_candidates <- nrow(top_dissim) + nrow(top_sim)
-
-      # ========== TIME-ADAPTIVE CHUNKING FOR R PARALLEL ==========
-      # Run pilot batch to measure speed, then size chunks for ~2 sec intervals
-      min_chunk_for_workers <- actual_n_workers * 4
-      TARGET_CHUNK_SECONDS <- 2.0
-
-      p_values <- tryCatch({
-        all_p_values <- numeric(nrow(top_dissim))
-        n_dissim <- nrow(top_dissim)
-
-        # Pilot batch to measure actual speed
-        pilot_size <- min(min_chunk_for_workers, n_dissim)
-
-        pilot_start <- Sys.time()
-        pilot_results <- furrr::future_map_dbl(
-          top_dissim$nodes_list[1:pilot_size],
-          test_single_candidate,
-          .options = furrr::furrr_options(
-            seed = TRUE,
-            globals = list(
-              test_combined_contribution = test_combined_contribution,
-              compute_averaged_jaccard = compute_averaged_jaccard,
-              compute_jaccard_for_contribution = compute_jaccard_for_contribution,
-              networks_flat_g1 = networks_flat_g1,
-              networks_flat_g2 = networks_flat_g2,
-              node_names = node_names,
-              n_permutations = n_permutations
-            )
-          )
-        )
-        pilot_elapsed <- as.numeric(difftime(Sys.time(), pilot_start, units = "secs"))
-
-        all_p_values[1:pilot_size] <- pilot_results
-
-        if(!is.null(progress_callback)) {
-          progress <- 0.5 + (pilot_size / total_candidates) * 0.5
-          progress_callback(progress)
-        }
-
-        if(verbose) message("[DEBUG brute_force] Pilot batch: ", pilot_size, " candidates in ",
-                round(pilot_elapsed, 2), " sec")
-
-        # Calculate adaptive chunk size for remaining candidates
-        remaining <- n_dissim - pilot_size
-        if (remaining > 0) {
-          time_per_candidate <- pilot_elapsed / pilot_size
-          adaptive_chunk_size <- max(
-            min_chunk_for_workers,
-            ceiling(TARGET_CHUNK_SECONDS / max(time_per_candidate, 0.001))
-          )
-
-          current_idx <- pilot_size + 1
-          chunk_num <- 1
-
-          while (current_idx <= n_dissim) {
-            end_idx <- min(current_idx + adaptive_chunk_size - 1, n_dissim)
-            chunk_indices <- current_idx:end_idx
-
-            chunk_results <- furrr::future_map_dbl(
-              top_dissim$nodes_list[chunk_indices],
-              test_single_candidate,
-              .options = furrr::furrr_options(
-                seed = TRUE,
-                globals = list(
-                  test_combined_contribution = test_combined_contribution,
-                  compute_averaged_jaccard = compute_averaged_jaccard,
-                  compute_jaccard_for_contribution = compute_jaccard_for_contribution,
-                  networks_flat_g1 = networks_flat_g1,
-                  networks_flat_g2 = networks_flat_g2,
-                  node_names = node_names,
-                  n_permutations = n_permutations
-                )
-              )
-            )
-
-            all_p_values[chunk_indices] <- chunk_results
-
-            if(!is.null(progress_callback)) {
-              progress <- 0.5 + (end_idx / total_candidates) * 0.5
-              progress_callback(progress)
-            }
-
-            if(verbose) message("[DEBUG brute_force] Dissimilarity chunk ", chunk_num,
-                    " complete (", end_idx, "/", n_dissim, " candidates)")
-
-            current_idx <- end_idx + 1
-            chunk_num <- chunk_num + 1
-          }
-        }
-
-        all_p_values
-      }, error = function(e) {
-        if(verbose) {
-          message("[DEBUG brute_force] PARALLEL ERROR: ", e$message)
-          message("[DEBUG brute_force] Falling back to serial execution...")
-        }
-        sapply(seq_along(top_dissim$nodes_list), function(i) {
-          if(verbose && i %% 20 == 1) message("[DEBUG brute_force] Fallback serial: ", i, "/", length(top_dissim$nodes_list))
-          if(!is.null(progress_callback)) {
-            progress_callback(0.5 + (i / total_candidates) * 0.5)
-          }
-          test_single_candidate(top_dissim$nodes_list[[i]])
-        })
-      })
-      if(verbose) {
-        message("[DEBUG brute_force] future_map_dbl for dissimilarity COMPLETED")
-        message("[DEBUG brute_force] Time: ", Sys.time())
-      }
-      top_dissim$p_value <- p_values
     } else {
+      # R serial fallback (R parallel workers have been removed - use C++ for parallelization)
       if(verbose) message("[DEBUG brute_force] Using SERIAL for dissimilarity (", nrow(top_dissim), " candidates)")
       # Serial candidate testing
       for(i in 1:nrow(top_dissim)) {
@@ -4410,126 +4119,8 @@ brute_force_discovery <- function(analysis_results,
         message("[DEBUG brute_force] Time: ", Sys.time())
       }
 
-    } else if(actual_use_parallel && nrow(top_sim) >= 3) {
-      if(verbose) {
-        message("[DEBUG brute_force] Using PARALLEL for similarity (", nrow(top_sim), " candidates)")
-        message("[DEBUG brute_force] Using ", actual_n_workers, " workers (adaptive selection)")
-        message("[DEBUG brute_force] Starting future_map_dbl for similarity...")
-        message("[DEBUG brute_force] Time: ", Sys.time())
-      }
-
-      # Calculate progress parameters (continuing from dissimilarity)
-      total_candidates <- nrow(top_dissim) + nrow(top_sim)
-      dissim_done <- nrow(top_dissim)
-
-      # ========== TIME-ADAPTIVE CHUNKING FOR R PARALLEL (SIMILARITY) ==========
-      min_chunk_for_workers <- actual_n_workers * 4
-      TARGET_CHUNK_SECONDS <- 2.0
-
-      p_values <- tryCatch({
-        all_p_values <- numeric(nrow(top_sim))
-        n_sim <- nrow(top_sim)
-
-        # Pilot batch to measure actual speed
-        pilot_size <- min(min_chunk_for_workers, n_sim)
-
-        pilot_start <- Sys.time()
-        pilot_results <- furrr::future_map_dbl(
-          top_sim$nodes_list[1:pilot_size],
-          test_single_candidate,
-          .options = furrr::furrr_options(
-            seed = TRUE,
-            globals = list(
-              test_combined_contribution = test_combined_contribution,
-              compute_averaged_jaccard = compute_averaged_jaccard,
-              compute_jaccard_for_contribution = compute_jaccard_for_contribution,
-              networks_flat_g1 = networks_flat_g1,
-              networks_flat_g2 = networks_flat_g2,
-              node_names = node_names,
-              n_permutations = n_permutations
-            )
-          )
-        )
-        pilot_elapsed <- as.numeric(difftime(Sys.time(), pilot_start, units = "secs"))
-
-        all_p_values[1:pilot_size] <- pilot_results
-
-        if(!is.null(progress_callback)) {
-          progress <- 0.5 + ((dissim_done + pilot_size) / total_candidates) * 0.5
-          progress_callback(progress)
-        }
-
-        if(verbose) message("[DEBUG brute_force] Similarity pilot: ", pilot_size, " candidates in ",
-                round(pilot_elapsed, 2), " sec")
-
-        # Calculate adaptive chunk size for remaining candidates
-        remaining <- n_sim - pilot_size
-        if (remaining > 0) {
-          time_per_candidate <- pilot_elapsed / pilot_size
-          adaptive_chunk_size <- max(
-            min_chunk_for_workers,
-            ceiling(TARGET_CHUNK_SECONDS / max(time_per_candidate, 0.001))
-          )
-
-          current_idx <- pilot_size + 1
-          chunk_num <- 1
-
-          while (current_idx <= n_sim) {
-            end_idx <- min(current_idx + adaptive_chunk_size - 1, n_sim)
-            chunk_indices <- current_idx:end_idx
-
-            chunk_results <- furrr::future_map_dbl(
-              top_sim$nodes_list[chunk_indices],
-              test_single_candidate,
-              .options = furrr::furrr_options(
-                seed = TRUE,
-                globals = list(
-                  test_combined_contribution = test_combined_contribution,
-                  compute_averaged_jaccard = compute_averaged_jaccard,
-                  compute_jaccard_for_contribution = compute_jaccard_for_contribution,
-                  networks_flat_g1 = networks_flat_g1,
-                  networks_flat_g2 = networks_flat_g2,
-                  node_names = node_names,
-                  n_permutations = n_permutations
-                )
-              )
-            )
-
-            all_p_values[chunk_indices] <- chunk_results
-
-            if(!is.null(progress_callback)) {
-              progress <- 0.5 + ((dissim_done + end_idx) / total_candidates) * 0.5
-              progress_callback(progress)
-            }
-
-            if(verbose) message("[DEBUG brute_force] Similarity chunk ", chunk_num,
-                    " complete (", end_idx, "/", n_sim, " candidates)")
-
-            current_idx <- end_idx + 1
-            chunk_num <- chunk_num + 1
-          }
-        }
-
-        all_p_values
-      }, error = function(e) {
-        if(verbose) {
-          message("[DEBUG brute_force] PARALLEL ERROR: ", e$message)
-          message("[DEBUG brute_force] Falling back to serial execution...")
-        }
-        sapply(seq_along(top_sim$nodes_list), function(i) {
-          if(verbose && i %% 20 == 1) message("[DEBUG brute_force] Fallback serial: ", i, "/", length(top_sim$nodes_list))
-          if(!is.null(progress_callback)) {
-            progress_callback(0.5 + ((dissim_done + i) / total_candidates) * 0.5)
-          }
-          test_single_candidate(top_sim$nodes_list[[i]])
-        })
-      })
-      if(verbose) {
-        message("[DEBUG brute_force] future_map_dbl for similarity COMPLETED")
-        message("[DEBUG brute_force] Time: ", Sys.time())
-      }
-      top_sim$p_value <- p_values
     } else {
+      # R serial fallback (R parallel workers have been removed - use C++ for parallelization)
       if(verbose) message("[DEBUG brute_force] Using SERIAL for similarity (", nrow(top_sim), " candidates)")
       # Serial candidate testing
       for(i in 1:nrow(top_sim)) {
