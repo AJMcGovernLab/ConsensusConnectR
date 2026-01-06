@@ -12314,7 +12314,14 @@ server <- function(input, output, session) {
         # 3. SAVE DISSIMILARITY RESULTS CSV
         # ==========================================
         if(!is.null(discovery$top_dissimilarity) && nrow(discovery$top_dissimilarity) > 0) {
-          write.csv(discovery$top_dissimilarity,
+          dissim_export <- discovery$top_dissimilarity
+          # Replace commas with semicolons in nodes column to avoid CSV parsing issues
+          if("nodes" %in% names(dissim_export)) {
+            dissim_export$nodes <- gsub(", ", "; ", dissim_export$nodes)
+          }
+          # Remove nodes_list column (it's a list type that doesn't export well)
+          dissim_export$nodes_list <- NULL
+          write.csv(dissim_export,
                     file.path(temp_base, "Results_Dissimilarity_Combinations.csv"),
                     row.names = FALSE)
         }
@@ -12323,7 +12330,14 @@ server <- function(input, output, session) {
         # 4. SAVE SIMILARITY RESULTS CSV
         # ==========================================
         if(!is.null(discovery$top_similarity) && nrow(discovery$top_similarity) > 0) {
-          write.csv(discovery$top_similarity,
+          sim_export <- discovery$top_similarity
+          # Replace commas with semicolons in nodes column to avoid CSV parsing issues
+          if("nodes" %in% names(sim_export)) {
+            sim_export$nodes <- gsub(", ", "; ", sim_export$nodes)
+          }
+          # Remove nodes_list column (it's a list type that doesn't export well)
+          sim_export$nodes_list <- NULL
+          write.csv(sim_export,
                     file.path(temp_base, "Results_Similarity_Combinations.csv"),
                     row.names = FALSE)
         }
