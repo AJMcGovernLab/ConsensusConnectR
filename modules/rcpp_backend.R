@@ -434,9 +434,12 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
       })
 
       # Determine chunk size for progress updates
-      # Process in chunks so we can report progress between C++ calls
-      # Smaller chunks = more responsive progress, but slightly more overhead
-      chunk_size <- max(1, min(ceiling(n_candidates / 10), 50))  # 10 updates, max 50 per chunk
+      # CRITICAL: Chunk size must be large enough for good thread utilization
+      # With many threads (e.g., 192), small chunks mean most threads are idle
+      # Minimum chunk: n_threads × 2 to ensure all threads get work
+      # Maximum: 4 progress updates (25%, 50%, 75%, 100%) for responsive UI
+      min_chunk_for_threads <- n_threads * 2
+      chunk_size <- max(min_chunk_for_threads, ceiling(n_candidates / 4))  # 4 updates max
 
       if (n_candidates <= chunk_size || is.null(progress_callback)) {
         # Small batch or no callback - process all at once

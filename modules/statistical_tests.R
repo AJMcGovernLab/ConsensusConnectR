@@ -235,12 +235,13 @@ estimate_permutation_runtime <- function(n_tests,
     batch_compute_ms <- candidates_per_thread * time_per_candidate_ms
 
     # Overhead per batch call (progress updates, R-C++ data transfer, memory allocation)
-    # Increased from 10ms to 50ms based on real-world measurements
-    n_batches <- ceiling(n_tests / max(1, ceiling(n_tests / 10)))
+    # With larger chunks (max 4 batches), overhead is reduced
+    # Minimum chunk: n_threads × 2, so batches = min(4, n_tests / (n_threads * 2))
+    n_batches <- min(4, ceiling(n_tests / max(1, n_threads * 2)))
     batch_overhead_ms <- n_batches * 50  # ~50ms overhead per C++ batch call
 
-    # Add progress reporting overhead (~100ms per 1000 candidates)
-    progress_overhead_ms <- (n_tests / 1000) * 100
+    # Progress reporting overhead is minimal with fewer updates
+    progress_overhead_ms <- n_batches * 25  # ~25ms per progress update
 
     perm_time_ms <- batch_compute_ms + batch_overhead_ms + progress_overhead_ms
 
@@ -4249,8 +4250,10 @@ brute_force_discovery <- function(analysis_results,
       total_candidates <- nrow(top_dissim) + nrow(top_sim)
 
       # Use chunk-based processing for progress updates
-      # Process in chunks so we can update Shiny progress between chunks
-      chunk_size <- max(actual_n_workers * 2, 10)  # Process 2x workers at a time for efficiency
+      # CRITICAL: Larger chunks reduce overhead from parallel job startup
+      # Minimum: 4x workers for good load balancing
+      # Maximum: 4 progress updates for responsive UI
+      chunk_size <- max(actual_n_workers * 4, ceiling(nrow(top_dissim) / 4))
       n_chunks <- ceiling(nrow(top_dissim) / chunk_size)
 
       p_values <- tryCatch({
@@ -4378,7 +4381,8 @@ brute_force_discovery <- function(analysis_results,
       dissim_done <- nrow(top_dissim)
 
       # Use chunk-based processing for progress updates
-      chunk_size <- max(actual_n_workers * 2, 10)
+      # CRITICAL: Larger chunks reduce overhead from parallel job startup
+      chunk_size <- max(actual_n_workers * 4, ceiling(nrow(top_sim) / 4))
       n_chunks <- ceiling(nrow(top_sim) / chunk_size)
 
       p_values <- tryCatch({
