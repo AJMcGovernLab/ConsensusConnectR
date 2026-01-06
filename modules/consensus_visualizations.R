@@ -1374,10 +1374,11 @@ plot_contribution_network_single <- function(avg_cor, node_summary, brain_areas 
 }
 
 
-#' Plot Dual Contribution Networks (Group 1 vs Group 2) - Side by Side
+#' Plot Dual Correlation Networks (Group 1 vs Group 2) - Side by Side
 #'
-#' Creates side-by-side network plots for each group, with edges colored to show
-#' shared connections (gray) vs unique connections (highlighted)
+#' Creates side-by-side correlation network plots for each group, with nodes
+#' colored by brain area and edges showing correlation strength. Edges are
+#' highlighted to show shared vs unique connections.
 #'
 #' @param group1_cor Correlation matrix for Group 1
 #' @param group2_cor Correlation matrix for Group 2
@@ -1436,43 +1437,44 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
   # Subset both correlation matrices to significant nodes only
   sub_cor1 <- group1_cor[sig_indices, sig_indices, drop = FALSE]
   sub_cor2 <- group2_cor[sig_indices, sig_indices, drop = FALSE]
+  node_names <- rownames(sub_cor1)
 
-  # Create binary adjacency matrices using threshold (top 50% of edges)
+  # Work with absolute correlations for edge weights
   abs_cor1 <- abs(sub_cor1)
   abs_cor2 <- abs(sub_cor2)
   diag(abs_cor1) <- 0
   diag(abs_cor2) <- 0
 
-  # Use median of non-zero values as threshold for each group
+  # Threshold at median to keep top 50% of edges
   nz_vals1 <- abs_cor1[abs_cor1 > 0]
   nz_vals2 <- abs_cor2[abs_cor2 > 0]
-
   thresh1 <- if(length(nz_vals1) > 0) quantile(nz_vals1, 0.5, na.rm = TRUE) else 0
   thresh2 <- if(length(nz_vals2) > 0) quantile(nz_vals2, 0.5, na.rm = TRUE) else 0
 
-  # Binary adjacency: 1 if edge exists, 0 otherwise
+  # Binary adjacency for edge classification
   binary1 <- (abs_cor1 >= thresh1) * 1
   binary2 <- (abs_cor2 >= thresh2) * 1
 
   # Classify edges
   shared_edges <- (binary1 == 1) & (binary2 == 1)
 
-  # Calculate Jaccard similarity for edges
+  # Calculate Jaccard similarity
   intersection_count <- sum(shared_edges[upper.tri(shared_edges)])
   union_count <- sum((binary1 | binary2)[upper.tri(binary1)])
   jaccard_similarity <- if(union_count > 0) intersection_count / union_count else 0
 
-  # Count edge types
+  # Edge counts
   n_shared <- sum(shared_edges[upper.tri(shared_edges)])
   n_g1_only <- sum((binary1 == 1 & binary2 == 0)[upper.tri(binary1)])
   n_g2_only <- sum((binary1 == 0 & binary2 == 1)[upper.tri(binary1)])
   n_g1_total <- sum(binary1[upper.tri(binary1)])
   n_g2_total <- sum(binary2[upper.tri(binary2)])
 
-  # Create separate networks for each group
+  # Create weighted adjacency matrices (correlation as weight)
   adj1_weighted <- abs_cor1 * binary1
   adj2_weighted <- abs_cor2 * binary2
 
+  # Create networks
   network1 <- igraph::graph_from_adjacency_matrix(
     adj1_weighted, mode = "undirected", weighted = TRUE, diag = FALSE
   )
@@ -1486,14 +1488,42 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
     return()
   }
 
-  # Color function for nodes based on direction ratio
-  get_node_color <- function(ratio) {
-    if(is.na(ratio) || ratio == 0) return("#808080")
-    if(ratio < -0.3) return("#2166AC")
-    if(ratio < 0) return("#67A9CF")
-    if(ratio > 0.3) return("#B2182B")
-    if(ratio > 0) return("#EF8A62")
-    return("#D1D1D1")
+  # Brain area color palette
+  brain_area_colors <- c(
+    "Cortex" = "#E41A1C",
+    "Hippocampus" = "#377EB8",
+    "Thalamus" = "#4DAF4A",
+    "Hypothalamus" = "#984EA3",
+    "Midbrain" = "#FF7F00",
+    "Striatum" = "#FFFF33",
+    "Amygdala" = "#A65628",
+    "Cerebellum" = "#F781BF",
+    "Basal Forebrain" = "#999999",
+    "Pallidum" = "#66C2A5",
+    "Pons" = "#FC8D62",
+    "Medulla" = "#8DA0CB",
+    "Olfactory" = "#E78AC3",
+    "Other" = "#A6D854"
+  )
+
+  # Assign node colors by brain area
+  if(!is.null(brain_areas) && length(brain_areas) > 0) {
+    node_colors <- sapply(node_names, function(n) {
+      area <- brain_areas[n]
+      if(is.na(area) || is.null(area)) area <- "Other"
+      col <- brain_area_colors[area]
+      if(is.na(col)) col <- brain_area_colors["Other"]
+      return(col)
+    })
+    # Get unique brain areas present
+    present_areas <- unique(sapply(node_names, function(n) {
+      area <- brain_areas[n]
+      if(is.na(area) || is.null(area)) "Other" else area
+    }))
+  } else {
+    # Default coloring if no brain areas provided
+    node_colors <- rep("#69b3a2", length(node_names))
+    present_areas <- NULL
   }
 
   # Get layout using union of edges for consistent positioning
@@ -1512,26 +1542,8 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
   set.seed(42)
   coords <- layout_fn(union_network)
 
-  # Get node names
-  node_names <- igraph::V(network1)$name
-  if(is.null(node_names)) node_names <- rownames(sub_cor1)
-  if(is.null(node_names)) node_names <- paste0("V", 1:igraph::vcount(network1))
-
-  # Set node colors and sizes based on contribution summary
-  node_colors <- sapply(node_names, function(n) {
-    idx <- which(node_summary$node == n)
-    if(length(idx) == 0) return("#E0E0E0")
-    get_node_color(node_summary$direction_ratio[idx])
-  })
-
-  node_sizes <- sapply(node_names, function(n) {
-    idx <- which(node_summary$node == n)
-    if(length(idx) == 0) return(12)
-    12 + sqrt(node_summary$total_count[idx]) * 3
-  })
-
-  # Helper to compute edge colors for a network
-  compute_edge_colors <- function(network, binary_this, binary_other, unique_color) {
+  # Helper to compute edge properties
+  compute_edge_props <- function(network, cor_matrix, binary_this, binary_other, unique_color) {
     edge_list <- igraph::as_edgelist(network)
     if(nrow(edge_list) == 0) return(list(colors = character(0), widths = numeric(0)))
 
@@ -1548,68 +1560,107 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
         edge_colors[i] <- adjustcolor("gray50", alpha.f = 0.3)
         edge_widths[i] <- 1
       } else {
+        cor_val <- cor_matrix[idx1, idx2]
         in_other <- binary_other[idx1, idx2] == 1
+
+        # Edge width proportional to correlation strength
+        edge_widths[i] <- 1 + abs(cor_val) * 4
+
         if(in_other) {
           # Shared edge - gray
-          edge_colors[i] <- adjustcolor("#7F8C8D", alpha.f = 0.6)
-          edge_widths[i] <- 1.5
+          edge_colors[i] <- adjustcolor("gray50", alpha.f = 0.5)
         } else {
           # Unique to this group - highlighted
           edge_colors[i] <- unique_color
-          edge_widths[i] <- 3
         }
       }
     }
     list(colors = edge_colors, widths = edge_widths)
   }
 
-  # Get edge colors for each network
-  edges1 <- compute_edge_colors(network1, binary1, binary2, "#E74C3C")  # Red for G1-unique
-  edges2 <- compute_edge_colors(network2, binary2, binary1, "#8E44AD")  # Purple for G2-unique
+  # Get edge properties for each network
+  edges1 <- compute_edge_props(network1, abs_cor1, binary1, binary2, "#E74C3C")  # Red for G1-unique
+  edges2 <- compute_edge_props(network2, abs_cor2, binary2, binary1, "#3498DB")  # Blue for G2-unique
 
   # Set up side-by-side layout
   old_par <- par(no.readonly = TRUE)
   on.exit(par(old_par))
 
-  par(mfrow = c(1, 2), mar = c(4, 1, 3, 1), oma = c(3, 0, 2, 0))
+  # Adjust layout based on whether we need a legend
+  if(!is.null(present_areas) && length(present_areas) > 0) {
+    layout_mat <- matrix(c(1, 2, 3, 3), nrow = 2, byrow = TRUE)
+    layout(layout_mat, heights = c(4, 1))
+    par(mar = c(2, 1, 3, 1), oma = c(2, 0, 2, 0))
+  } else {
+    par(mfrow = c(1, 2), mar = c(4, 1, 3, 1), oma = c(3, 0, 2, 0))
+  }
 
   # Plot Group 1 network
   igraph::V(network1)$color <- node_colors
-  igraph::V(network1)$size <- node_sizes
+  igraph::V(network1)$size <- 15
 
   plot(network1, layout = coords,
        vertex.label = node_names,
-       vertex.label.cex = 0.7,
+       vertex.label.cex = 0.65,
        vertex.label.color = "black",
-       vertex.frame.color = "gray40",
+       vertex.frame.color = "gray30",
        edge.width = edges1$widths,
        edge.color = edges1$colors,
        main = group1_name)
 
   mtext(sprintf("%d edges (%d unique, %d shared)", n_g1_total, n_g1_only, n_shared),
-        side = 1, line = 2, cex = 0.75, col = "gray40")
+        side = 1, line = 0.5, cex = 0.7, col = "gray40")
 
   # Plot Group 2 network
   igraph::V(network2)$color <- node_colors
-  igraph::V(network2)$size <- node_sizes
+  igraph::V(network2)$size <- 15
 
   plot(network2, layout = coords,
        vertex.label = node_names,
-       vertex.label.cex = 0.7,
+       vertex.label.cex = 0.65,
        vertex.label.color = "black",
-       vertex.frame.color = "gray40",
+       vertex.frame.color = "gray30",
        edge.width = edges2$widths,
        edge.color = edges2$colors,
        main = group2_name)
 
   mtext(sprintf("%d edges (%d unique, %d shared)", n_g2_total, n_g2_only, n_shared),
-        side = 1, line = 2, cex = 0.75, col = "gray40")
+        side = 1, line = 0.5, cex = 0.7, col = "gray40")
+
+  # Add legend panel
+  if(!is.null(present_areas) && length(present_areas) > 0) {
+    par(mar = c(0, 1, 0, 1))
+    plot.new()
+
+    # Brain area legend
+    legend_colors <- brain_area_colors[present_areas]
+    legend_colors <- legend_colors[!is.na(legend_colors)]
+
+    legend("left",
+           legend = names(legend_colors),
+           fill = legend_colors,
+           title = "Brain Area",
+           cex = 0.8,
+           ncol = min(length(legend_colors), 5),
+           bty = "n")
+
+    # Edge legend
+    legend("right",
+           legend = c(paste0("Unique to ", group1_name),
+                     paste0("Unique to ", group2_name),
+                     "Shared"),
+           col = c("#E74C3C", "#3498DB", "gray50"),
+           lwd = c(3, 3, 2),
+           title = "Edge Type",
+           cex = 0.8,
+           bty = "n")
+  }
 
   # Overall title
-  mtext(sprintf("Network Comparison (Jaccard Similarity: %.3f)", jaccard_similarity),
+  mtext(sprintf("Correlation Networks (Jaccard Similarity: %.3f)", jaccard_similarity),
         side = 3, outer = TRUE, cex = 1.0, font = 2)
 
-  # Bottom legend
-  mtext("Gray = shared edges | Colored = unique edges | Nodes colored by contribution direction",
-        side = 1, outer = TRUE, line = 1, cex = 0.8, col = "gray40")
+  # Bottom note
+  mtext("Edge width = correlation strength | Only regions from significant combinations shown",
+        side = 1, outer = TRUE, line = 0.5, cex = 0.75, col = "gray40")
 }
