@@ -1507,9 +1507,22 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
   )
 
   # Assign node colors by brain area
-  if(!is.null(brain_areas) && length(brain_areas) > 0) {
+  # brain_areas is a list: list("AreaName" = c("region1", "region2"), ...)
+  # We need to invert it to find which area each region belongs to
+  if(!is.null(brain_areas) && length(brain_areas) > 0 && is.list(brain_areas)) {
+    # Create region -> area mapping
+    region_to_area <- character()
+    for(area_name in names(brain_areas)) {
+      regions_in_area <- brain_areas[[area_name]]
+      if(length(regions_in_area) > 0) {
+        for(reg in regions_in_area) {
+          region_to_area[reg] <- area_name
+        }
+      }
+    }
+
     node_colors <- sapply(node_names, function(n) {
-      area <- brain_areas[n]
+      area <- region_to_area[n]
       if(is.na(area) || is.null(area)) area <- "Other"
       col <- brain_area_colors[area]
       if(is.na(col)) col <- brain_area_colors["Other"]
@@ -1517,7 +1530,7 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
     })
     # Get unique brain areas present
     present_areas <- unique(sapply(node_names, function(n) {
-      area <- brain_areas[n]
+      area <- region_to_area[n]
       if(is.na(area) || is.null(area)) "Other" else area
     }))
   } else {
