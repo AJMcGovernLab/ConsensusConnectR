@@ -1374,10 +1374,10 @@ plot_contribution_network_single <- function(avg_cor, node_summary, brain_areas 
 }
 
 
-#' Plot Dual Contribution Networks (Group 1 vs Group 2)
+#' Plot Dual Contribution Networks (Group 1 vs Group 2) - Side by Side
 #'
-#' Creates a network comparison plot with nodes colored by contribution direction
-#' and edges colored using Jaccard-based classification (shared vs unique edges)
+#' Creates side-by-side network plots for each group, with edges colored to show
+#' shared connections (gray) vs unique connections (highlighted)
 #'
 #' @param group1_cor Correlation matrix for Group 1
 #' @param group2_cor Correlation matrix for Group 2
@@ -1433,7 +1433,7 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
     return()
   }
 
-  # Subset both correlation matrices to significant nodes
+  # Subset both correlation matrices to significant nodes only
   sub_cor1 <- group1_cor[sig_indices, sig_indices, drop = FALSE]
   sub_cor2 <- group2_cor[sig_indices, sig_indices, drop = FALSE]
 
@@ -1454,41 +1454,35 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
   binary1 <- (abs_cor1 >= thresh1) * 1
   binary2 <- (abs_cor2 >= thresh2) * 1
 
-  # Classify edges: shared (both), G1-only, G2-only
-  # shared = both have edge, g1_only = only G1 has edge, g2_only = only G2 has edge
+  # Classify edges
   shared_edges <- (binary1 == 1) & (binary2 == 1)
-  g1_only_edges <- (binary1 == 1) & (binary2 == 0)
-  g2_only_edges <- (binary1 == 0) & (binary2 == 1)
 
   # Calculate Jaccard similarity for edges
-  # Jaccard = intersection / union
   intersection_count <- sum(shared_edges[upper.tri(shared_edges)])
   union_count <- sum((binary1 | binary2)[upper.tri(binary1)])
   jaccard_similarity <- if(union_count > 0) intersection_count / union_count else 0
 
   # Count edge types
   n_shared <- sum(shared_edges[upper.tri(shared_edges)])
-  n_g1_only <- sum(g1_only_edges[upper.tri(g1_only_edges)])
-  n_g2_only <- sum(g2_only_edges[upper.tri(g2_only_edges)])
+  n_g1_only <- sum((binary1 == 1 & binary2 == 0)[upper.tri(binary1)])
+  n_g2_only <- sum((binary1 == 0 & binary2 == 1)[upper.tri(binary1)])
+  n_g1_total <- sum(binary1[upper.tri(binary1)])
+  n_g2_total <- sum(binary2[upper.tri(binary2)])
 
-  # Create combined network using union of edges
-  union_adj <- pmax(abs_cor1, abs_cor2)
-  union_binary <- (binary1 | binary2) * 1
+  # Create separate networks for each group
+  adj1_weighted <- abs_cor1 * binary1
+  adj2_weighted <- abs_cor2 * binary2
 
-  # For visualization, use correlation strength as weight but filter to significant edges
-  combined_adj <- union_adj * union_binary
-
-  # Create network
-  network <- igraph::graph_from_adjacency_matrix(
-    combined_adj,
-    mode = "undirected",
-    weighted = TRUE,
-    diag = FALSE
+  network1 <- igraph::graph_from_adjacency_matrix(
+    adj1_weighted, mode = "undirected", weighted = TRUE, diag = FALSE
+  )
+  network2 <- igraph::graph_from_adjacency_matrix(
+    adj2_weighted, mode = "undirected", weighted = TRUE, diag = FALSE
   )
 
-  if(igraph::vcount(network) < 2) {
+  if(igraph::vcount(network1) < 2 || igraph::vcount(network2) < 2) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
-    text(1, 1, "Could not create network", cex = 1.0, col = "gray50")
+    text(1, 1, "Could not create networks", cex = 1.0, col = "gray50")
     return()
   }
 
@@ -1502,7 +1496,12 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
     return("#D1D1D1")
   }
 
-  # Get layout
+  # Get layout using union of edges for consistent positioning
+  union_adj <- pmax(adj1_weighted, adj2_weighted)
+  union_network <- igraph::graph_from_adjacency_matrix(
+    union_adj, mode = "undirected", weighted = TRUE, diag = FALSE
+  )
+
   layout_fn <- switch(layout,
                       "fr" = igraph::layout_with_fr,
                       "circle" = igraph::layout_in_circle,
@@ -1511,13 +1510,14 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
   )
 
   set.seed(42)
-  coords <- layout_fn(network)
+  coords <- layout_fn(union_network)
 
   # Get node names
-  node_names <- igraph::V(network)$name
-  if(is.null(node_names)) node_names <- paste0("V", 1:igraph::vcount(network))
+  node_names <- igraph::V(network1)$name
+  if(is.null(node_names)) node_names <- rownames(sub_cor1)
+  if(is.null(node_names)) node_names <- paste0("V", 1:igraph::vcount(network1))
 
-  # Set node colors and sizes
+  # Set node colors and sizes based on contribution summary
   node_colors <- sapply(node_names, function(n) {
     idx <- which(node_summary$node == n)
     if(length(idx) == 0) return("#E0E0E0")
@@ -1526,90 +1526,90 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
 
   node_sizes <- sapply(node_names, function(n) {
     idx <- which(node_summary$node == n)
-    if(length(idx) == 0) return(10)
-    10 + sqrt(node_summary$total_count[idx]) * 4
+    if(length(idx) == 0) return(12)
+    12 + sqrt(node_summary$total_count[idx]) * 3
   })
 
-  igraph::V(network)$color <- node_colors
-  igraph::V(network)$size <- node_sizes
+  # Helper to compute edge colors for a network
+  compute_edge_colors <- function(network, binary_this, binary_other, unique_color) {
+    edge_list <- igraph::as_edgelist(network)
+    if(nrow(edge_list) == 0) return(list(colors = character(0), widths = numeric(0)))
 
-  # Compute edge colors based on Jaccard classification
-  edge_list <- igraph::as_edgelist(network)
-  edge_colors <- character(nrow(edge_list))
-  edge_widths <- numeric(nrow(edge_list))
+    edge_colors <- character(nrow(edge_list))
+    edge_widths <- numeric(nrow(edge_list))
 
-  for(i in 1:nrow(edge_list)) {
-    n1 <- edge_list[i, 1]
-    n2 <- edge_list[i, 2]
-    # Find indices in sub matrices
-    idx1 <- which(rownames(sub_cor1) == n1)
-    idx2 <- which(rownames(sub_cor1) == n2)
+    for(i in 1:nrow(edge_list)) {
+      n1 <- edge_list[i, 1]
+      n2 <- edge_list[i, 2]
+      idx1 <- which(rownames(binary_this) == n1)
+      idx2 <- which(rownames(binary_this) == n2)
 
-    if(length(idx1) == 0 || length(idx2) == 0) {
-      edge_colors[i] <- adjustcolor("gray50", alpha.f = 0.3)
-      edge_widths[i] <- 1.5
-    } else {
-      # Determine edge type
-      in_g1 <- binary1[idx1, idx2] == 1
-      in_g2 <- binary2[idx1, idx2] == 1
-
-      if(in_g1 && in_g2) {
-        # Shared edge - gray
-        edge_colors[i] <- "#7F8C8D"  # Gray
-        edge_widths[i] <- 2
-      } else if(in_g1 && !in_g2) {
-        # Group 1 only - red/orange
-        edge_colors[i] <- "#E74C3C"  # Red
-        edge_widths[i] <- 3
-      } else if(!in_g1 && in_g2) {
-        # Group 2 only - purple/blue
-        edge_colors[i] <- "#8E44AD"  # Purple
-        edge_widths[i] <- 3
-      } else {
-        # Should not happen since we filtered to union
+      if(length(idx1) == 0 || length(idx2) == 0) {
         edge_colors[i] <- adjustcolor("gray50", alpha.f = 0.3)
         edge_widths[i] <- 1
+      } else {
+        in_other <- binary_other[idx1, idx2] == 1
+        if(in_other) {
+          # Shared edge - gray
+          edge_colors[i] <- adjustcolor("#7F8C8D", alpha.f = 0.6)
+          edge_widths[i] <- 1.5
+        } else {
+          # Unique to this group - highlighted
+          edge_colors[i] <- unique_color
+          edge_widths[i] <- 3
+        }
       }
     }
+    list(colors = edge_colors, widths = edge_widths)
   }
 
-  # Set up layout with room for legend and subtitle
-  par(mar = c(6, 1, 4, 1))
+  # Get edge colors for each network
+  edges1 <- compute_edge_colors(network1, binary1, binary2, "#E74C3C")  # Red for G1-unique
+  edges2 <- compute_edge_colors(network2, binary2, binary1, "#8E44AD")  # Purple for G2-unique
 
-  # Plot
-  plot(network, layout = coords,
+  # Set up side-by-side layout
+  old_par <- par(no.readonly = TRUE)
+  on.exit(par(old_par))
+
+  par(mfrow = c(1, 2), mar = c(4, 1, 3, 1), oma = c(3, 0, 2, 0))
+
+  # Plot Group 1 network
+  igraph::V(network1)$color <- node_colors
+  igraph::V(network1)$size <- node_sizes
+
+  plot(network1, layout = coords,
        vertex.label = node_names,
-       vertex.label.cex = 0.6,
+       vertex.label.cex = 0.7,
        vertex.label.color = "black",
        vertex.frame.color = "gray40",
-       edge.width = edge_widths,
-       edge.color = edge_colors,
-       main = paste("Network Comparison:", group1_name, "vs", group2_name, "\n(Significant Regions Only)"))
+       edge.width = edges1$widths,
+       edge.color = edges1$colors,
+       main = group1_name)
 
-  # Add node legend
-  legend("topleft",
-         legend = c("Similarity Driver", "Dissimilarity Driver", "Balanced"),
-         fill = c("#2166AC", "#B2182B", "#D1D1D1"),
-         title = "Node Color",
-         cex = 0.7,
-         bg = "white")
+  mtext(sprintf("%d edges (%d unique, %d shared)", n_g1_total, n_g1_only, n_shared),
+        side = 1, line = 2, cex = 0.75, col = "gray40")
 
-  # Add edge legend with counts
-  legend("topright",
-         legend = c(paste0("Unique to ", group1_name, " (", n_g1_only, ")"),
-                   paste0("Unique to ", group2_name, " (", n_g2_only, ")"),
-                   paste0("Shared (", n_shared, ")")),
-         col = c("#E74C3C", "#8E44AD", "#7F8C8D"),
-         lwd = c(3, 3, 2),
-         title = "Edge Type (Jaccard)",
-         cex = 0.7,
-         bg = "white")
+  # Plot Group 2 network
+  igraph::V(network2)$color <- node_colors
+  igraph::V(network2)$size <- node_sizes
 
-  # Add Jaccard similarity subtitle
-  mtext(sprintf("Edge Jaccard Similarity: %.3f  |  Shared: %d, %s-only: %d, %s-only: %d",
-                jaccard_similarity, n_shared, group1_name, n_g1_only, group2_name, n_g2_only),
-        side = 1, line = 3, cex = 0.75, col = "gray30")
+  plot(network2, layout = coords,
+       vertex.label = node_names,
+       vertex.label.cex = 0.7,
+       vertex.label.color = "black",
+       vertex.frame.color = "gray40",
+       edge.width = edges2$widths,
+       edge.color = edges2$colors,
+       main = group2_name)
 
-  mtext("Edges thresholded at median correlation strength per group",
-        side = 1, line = 4.2, cex = 0.7, col = "gray50")
+  mtext(sprintf("%d edges (%d unique, %d shared)", n_g2_total, n_g2_only, n_shared),
+        side = 1, line = 2, cex = 0.75, col = "gray40")
+
+  # Overall title
+  mtext(sprintf("Network Comparison (Jaccard Similarity: %.3f)", jaccard_similarity),
+        side = 3, outer = TRUE, cex = 1.0, font = 2)
+
+  # Bottom legend
+  mtext("Gray = shared edges | Colored = unique edges | Nodes colored by contribution direction",
+        side = 1, outer = TRUE, line = 1, cex = 0.8, col = "gray40")
 }
