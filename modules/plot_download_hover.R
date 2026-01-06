@@ -1773,6 +1773,124 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
       }
     ),
 
+    "contributionNetworkPlot" = list(
+      condition = function() {
+        results <- analysis_results$regional_contribution
+        if(is.null(results)) return(FALSE)
+        if(is.null(results$mode) || results$mode != "artificial") return(FALSE)
+        if(is.null(results$method) || results$method != "brute_force") return(FALSE)
+        if(is.null(results$discovery)) return(FALSE)
+        return(TRUE)
+      },
+      render = function() {
+        results <- analysis_results$regional_contribution
+        if(is.null(results) || is.null(results$mode) || results$mode != "artificial") {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "Run Artificial Brain Area Discovery first", cex = 1.1, col = "gray50")
+          return()
+        }
+
+        if(is.null(results$method) || results$method != "brute_force") {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "Brute force results not available", cex = 1.1, col = "gray50")
+          return()
+        }
+
+        discovery <- results$discovery
+        if(is.null(discovery)) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "No discovery results available", cex = 1.1, col = "gray50")
+          return()
+        }
+
+        # Get filter settings from UI
+        sig_only <- input$contrib_viz_sig_only %||% TRUE
+        synergistic_only <- input$contrib_viz_synergistic %||% FALSE
+        viz_type <- input$contrib_viz_type %||% "single"
+        layout_type <- input$contrib_viz_layout %||% "fr"
+
+        # Compute node contribution summary
+        node_summary <- compute_node_contribution_summary(
+          discovery,
+          sig_only = sig_only,
+          synergistic_only = synergistic_only
+        )
+
+        if(is.null(node_summary) || nrow(node_summary) == 0) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          msg <- "No contributions found"
+          if(sig_only) msg <- paste(msg, "\n(try unchecking 'Significant only')")
+          if(synergistic_only) msg <- paste(msg, "\n(try unchecking 'Synergistic only')")
+          text(1, 1, msg, cex = 1.0, col = "gray50")
+          return()
+        }
+
+        # Check for required correlation matrices
+        if(is.null(results$avg_cor)) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "Correlation matrix not available", cex = 1.0, col = "gray50")
+          return()
+        }
+
+        # Call appropriate plotting function based on viz_type
+        if(viz_type == "single") {
+          plot_contribution_network_single(
+            avg_cor = results$avg_cor,
+            node_summary = node_summary,
+            brain_areas = ui_state$brain_areas,
+            layout = layout_type
+          )
+        } else if(viz_type == "split") {
+          # Split circle view: similarity regions vs dissimilarity regions
+          avg_thresh <- NULL
+          if(!is.null(analysis_results$group_thresholds)) {
+            thresholds <- unlist(analysis_results$group_thresholds)
+            if(length(thresholds) > 0) {
+              avg_thresh <- mean(thresholds, na.rm = TRUE)
+            }
+          }
+
+          plot_contribution_network_split(
+            avg_cor = results$avg_cor,
+            node_summary = node_summary,
+            brain_areas = ui_state$brain_areas,
+            area_colors = ui_state$area_colors,
+            threshold = avg_thresh,
+            show_inter_edges = input$contrib_viz_show_inter %||% TRUE,
+            group1_name = results$group1_name,
+            group2_name = results$group2_name
+          )
+        } else {
+          # Dual view: show Group 1 vs Group 2 networks
+          if(is.null(results$group1_cor) || is.null(results$group2_cor)) {
+            plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+            text(1, 1, "Group correlation matrices not available\n(re-run analysis)", cex = 1.0, col = "gray50")
+            return()
+          }
+
+          thresh1 <- NULL
+          thresh2 <- NULL
+          if(!is.null(analysis_results$group_thresholds)) {
+            thresh1 <- analysis_results$group_thresholds[[results$group1_name]]
+            thresh2 <- analysis_results$group_thresholds[[results$group2_name]]
+          }
+
+          plot_contribution_network_dual(
+            group1_cor = results$group1_cor,
+            group2_cor = results$group2_cor,
+            node_summary = node_summary,
+            group1_name = results$group1_name,
+            group2_name = results$group2_name,
+            brain_areas = ui_state$brain_areas,
+            area_colors = ui_state$area_colors,
+            threshold1 = thresh1,
+            threshold2 = thresh2,
+            layout = layout_type
+          )
+        }
+      }
+    ),
+
     "avgNodeStrengthByRegionPlot" = list(
       condition = function() !is.null(analysis_results$method_percolation_results) && !is.null(ui_state$brain_areas),
       render = function() {
