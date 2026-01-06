@@ -204,6 +204,59 @@ is_cpp_really_available <- function() {
   return(TRUE)
 }
 
+# =============================================================================
+# PROGRESS TRACKING UTILITIES
+# =============================================================================
+
+#' Read Progress from File
+#'
+#' Reads the current progress from a progress file written by C++ batch processing.
+#' The file format is: completed\ntotal\n
+#'
+#' @param progress_file Path to the progress file
+#' @return List with completed, total, and fraction (0-1)
+#' @keywords internal
+read_progress_file <- function(progress_file) {
+  if (!file.exists(progress_file)) {
+    return(list(completed = 0, total = 0, fraction = 0))
+  }
+
+  tryCatch({
+    lines <- readLines(progress_file, n = 2, warn = FALSE)
+    if (length(lines) >= 2) {
+      completed <- as.integer(lines[1])
+      total <- as.integer(lines[2])
+      fraction <- if (total > 0) completed / total else 0
+      return(list(completed = completed, total = total, fraction = fraction))
+    }
+    return(list(completed = 0, total = 0, fraction = 0))
+  }, error = function(e) {
+    return(list(completed = 0, total = 0, fraction = 0))
+  })
+}
+
+#' Create Progress File Path
+#'
+#' Creates a unique temporary file path for progress tracking.
+#'
+#' @return Path to a temporary file for progress tracking
+#' @keywords internal
+create_progress_file <- function() {
+  tempfile(pattern = "cpp_progress_", fileext = ".txt")
+}
+
+#' Cleanup Progress File
+#'
+#' Removes the progress file after processing is complete.
+#'
+#' @param progress_file Path to the progress file
+#' @keywords internal
+cleanup_progress_file <- function(progress_file) {
+  if (!is.null(progress_file) && file.exists(progress_file)) {
+    tryCatch(unlink(progress_file), error = function(e) NULL)
+  }
+}
+
 #' Test Combined Contribution (C++ or R)
 #'
 #' High-level wrapper that uses C++ backend if available, otherwise falls back to R.
@@ -416,7 +469,8 @@ compute_averaged_jaccard_r <- function(networks_g1, networks_g2, exclude_nodes =
 #' @export
 batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
                                         candidates_list, n_permutations,
-                                        n_threads = 0, progress_callback = NULL) {
+                                        n_threads = 0, progress_callback = NULL,
+                                        progress_file = NULL) {
 
   n_candidates <- length(candidates_list)
 
@@ -426,7 +480,7 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
   }
 
   if (CPP_BACKEND_AVAILABLE && n_candidates >= 1) {
-    # Use C++ batch processing with TIME-ADAPTIVE chunking for progress
+    # Use C++ batch processing
     tryCatch({
       # Convert ALL candidates to indices (0-based) upfront
       candidates_indices <- lapply(candidates_list, function(regions) {
@@ -436,6 +490,38 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
       # Minimum chunk for thread utilization: need enough candidates for all threads
       min_chunk_for_threads <- n_threads * 2
 
+      # ========== FILE-BASED PROGRESS MODE ==========
+      # If progress_file is provided, use single C++ call with file-based progress
+      # This is the most efficient mode - no chunking overhead, C++ writes progress to file
+      # Caller can poll the file asynchronously (e.g., via Shiny's invalidateLater)
+      if (!is.null(progress_file)) {
+        if (!is.null(progress_callback)) progress_callback(0.01)  # Signal start
+
+        result <- batch_permutation_test_cpp(
+          matrices_g1 = networks_g1,
+          matrices_g2 = networks_g2,
+          candidates_list = candidates_indices,
+          n_permutations = as.integer(n_permutations),
+          n_threads = as.integer(n_threads),
+          seed = 42L,
+          progress_file = progress_file
+        )
+
+        if (!is.null(progress_callback)) progress_callback(1.0)
+
+        # Clean up progress file
+        cleanup_progress_file(progress_file)
+
+        return(data.frame(
+          p_value = result$p_values,
+          observed = result$observed_values,
+          ci_lower = result$ci_lower,
+          ci_upper = result$ci_upper,
+          method = "cpp_file_progress"
+        ))
+      }
+
+      # ========== LEGACY MODE: No progress tracking needed ==========
       # No progress callback or small batch - process all at once (fastest)
       if (is.null(progress_callback) || n_candidates <= min_chunk_for_threads) {
         if (!is.null(progress_callback)) progress_callback(0.1)
@@ -460,7 +546,7 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
         ))
       }
 
-      # ========== TIME-ADAPTIVE CHUNKING ==========
+      # ========== TIME-ADAPTIVE CHUNKING (backwards compatible) ==========
       # Strategy: Run small pilot batch to measure speed, then size chunks for ~2 sec intervals
       # This gives responsive progress without excessive overhead
 

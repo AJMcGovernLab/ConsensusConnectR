@@ -15,10 +15,41 @@
 #include <random>
 #include <numeric>    // For std::iota
 #include <chrono>     // For benchmarking
+#include <atomic>     // For progress tracking
+#include <fstream>    // For progress file output
 
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+
+// Global atomic counter for progress tracking (thread-safe)
+static std::atomic<int> g_progress_counter(0);
+static std::atomic<int> g_progress_total(0);
+static std::string g_progress_file_path = "";
+
+// Write progress to file (called periodically from threads)
+// Uses atomic operations to ensure only one write at a time
+static std::atomic<bool> g_write_in_progress(false);
+
+inline void write_progress_to_file() {
+  // Only write if a progress file is configured
+  if (g_progress_file_path.empty()) return;
+
+  // Simple spin-lock to avoid multiple simultaneous writes
+  bool expected = false;
+  if (!g_write_in_progress.compare_exchange_strong(expected, true)) {
+    return;  // Another thread is already writing
+  }
+
+  // Write progress atomically
+  std::ofstream out(g_progress_file_path);
+  if (out.is_open()) {
+    out << g_progress_counter.load() << "\n" << g_progress_total.load() << "\n";
+    out.close();
+  }
+
+  g_write_in_progress.store(false);
+}
 
 using namespace Rcpp;
 using namespace arma;
@@ -704,9 +735,18 @@ Rcpp::List batch_permutation_test_cpp(
     const Rcpp::List& candidates_list,  // List of integer vectors (exclude indices)
     int n_permutations,
     int n_threads = 0,
-    int seed = 42) {
+    int seed = 42,
+    Rcpp::String progress_file = "") {
 
   int n_candidates = candidates_list.size();
+
+  // Initialize progress tracking
+  g_progress_counter.store(0);
+  g_progress_total.store(n_candidates);
+  g_progress_file_path = Rcpp::as<std::string>(progress_file);
+
+  // Calculate update interval (write every ~1% or at least every 10 candidates)
+  int progress_update_interval = std::max(1, std::min(n_candidates / 100, 10));
   int n_matrices = matrices_g1.size();
 
   if (n_matrices == 0 || n_candidates == 0) {
@@ -849,8 +889,20 @@ Rcpp::List batch_permutation_test_cpp(
       // Find upper quantile
       std::nth_element(null_dist.begin(), null_dist.begin() + idx_upper, null_dist.end());
       ci_upper[c] = null_dist[idx_upper];
+
+      // Update progress counter (atomic, thread-safe)
+      int current_progress = ++g_progress_counter;
+
+      // Periodically write progress to file (only from one thread at a time)
+      if (current_progress % progress_update_interval == 0) {
+        write_progress_to_file();
+      }
     }
   }
+
+  // Final progress write after OpenMP section completes
+  write_progress_to_file();
+
   #else
   // Serial fallback (uses same precomputed avg_baseline from above)
   ThreadLocalBuffers serial_buf(n_nodes, seed);
@@ -906,7 +958,19 @@ Rcpp::List batch_permutation_test_cpp(
     ci_lower[c] = null_dist[idx_lower];
     std::nth_element(null_dist.begin(), null_dist.begin() + idx_upper, null_dist.end());
     ci_upper[c] = null_dist[idx_upper];
+
+    // Update progress counter (serial path)
+    int current_progress = ++g_progress_counter;
+
+    // Periodically write progress to file
+    if (current_progress % progress_update_interval == 0) {
+      write_progress_to_file();
+    }
   }
+
+  // Final progress write after serial loop completes
+  write_progress_to_file();
+
   #endif
 
   return Rcpp::List::create(
@@ -945,6 +1009,32 @@ Rcpp::List get_openmp_info() {
 // [[Rcpp::export]]
 int test_cpp_compilation() {
   return 42;
+}
+
+// Get current progress from atomic counters (can be called during computation)
+// [[Rcpp::export]]
+Rcpp::List get_batch_progress() {
+  return Rcpp::List::create(
+    Rcpp::Named("completed") = g_progress_counter.load(),
+    Rcpp::Named("total") = g_progress_total.load()
+  );
+}
+
+// Reset progress counters (call before starting a new batch)
+// [[Rcpp::export]]
+void reset_batch_progress() {
+  g_progress_counter.store(0);
+  g_progress_total.store(0);
+  g_progress_file_path = "";
+}
+
+// Initialize progress file for external monitoring
+// [[Rcpp::export]]
+void init_progress_file(Rcpp::String file_path, int total) {
+  g_progress_counter.store(0);
+  g_progress_total.store(total);
+  g_progress_file_path = Rcpp::as<std::string>(file_path);
+  write_progress_to_file();  // Write initial state
 }
 
 // =============================================================================
