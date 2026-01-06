@@ -245,9 +245,38 @@ estimate_permutation_runtime <- function(n_tests,
 
     perm_time_ms <- batch_compute_ms + batch_overhead_ms + progress_overhead_ms
 
-    # Apply safety factor (15%) to account for variance, cache effects, memory pressure
-    # Calibration uses small samples that may benefit from cache locality
-    SAFETY_FACTOR <- 1.15
+    # Apply safety factor to account for:
+    # 1. Cache effects: calibration tests 1 candidate (fits in cache), actual tests thousands
+    # 2. Memory bandwidth: many threads competing for memory at scale
+    # 3. Thread scheduling overhead at scale
+    # 4. System variance (other processes, thermal throttling, etc.)
+    #
+    # CRITICAL: Calibration measures best-case (warm cache, no contention)
+    # Real-world has significant memory pressure with many candidates
+    # Scale factor based on thread count and candidate count
+    base_safety <- 2.0  # Minimum 2x safety margin
+
+    # Additional factor for high thread counts (memory bandwidth limitation)
+    # At 192 threads, memory bandwidth becomes the bottleneck, not compute
+    thread_factor <- if (n_threads > 64) {
+      1.0 + (n_threads - 64) / 64 * 0.5  # +50% per 64 threads above 64
+    } else {
+      1.0
+    }
+
+    # Additional factor for many candidates (cache pressure)
+    # More candidates = more memory accesses, more cache misses
+    candidate_factor <- if (n_tests > 1000) {
+      1.0 + log10(n_tests / 1000) * 0.3  # +30% per order of magnitude above 1000
+    } else {
+      1.0
+    }
+
+    SAFETY_FACTOR <- base_safety * thread_factor * candidate_factor
+
+    # Cap safety factor to avoid absurd estimates, but minimum 2x
+    SAFETY_FACTOR <- max(2.0, min(SAFETY_FACTOR, 10.0))
+
     time_ms <- (enum_time_ms + perm_time_ms) * SAFETY_FACTOR
     serial_compute_ms <- total_ops * serial_perm_time_ms  # True serial time
     parallel_beneficial <- TRUE  # C++ is always beneficial
@@ -261,7 +290,9 @@ estimate_permutation_runtime <- function(n_tests,
       candidates_per_thread = candidates_per_thread,
       n_threads = n_threads,
       serial_perm_time_ms = serial_perm_time_ms,
-      safety_factor = SAFETY_FACTOR
+      safety_factor = SAFETY_FACTOR,
+      thread_factor = thread_factor,
+      candidate_factor = candidate_factor
     )
 
   } else if (n_workers > 1) {
@@ -594,6 +625,59 @@ calibrate_parallel_performance <- function(analysis_results,
         message("  OpenMP threads: ", cpp_threads)
       }
 
+      # ========== BATCH MODE CALIBRATION (more accurate for actual workload) ==========
+      # Single-candidate tests don't capture memory/cache effects at scale
+      # Test batch mode with multiple candidates to get realistic timing
+      batch_time_per_candidate_ms <- NA
+      if (exists("batch_test_candidates_fast", mode = "function")) {
+        if (verbose) message("  Measuring batch mode performance...")
+
+        # Create a batch of test candidates (mix of sizes)
+        n_batch_candidates <- min(50, n_nodes * 3)  # Test 50 candidates
+        batch_candidates <- list()
+        for (i in 1:n_batch_candidates) {
+          combo_size <- sample(1:min(3, n_nodes - 1), 1)
+          batch_candidates[[i]] <- sample(node_names, combo_size)
+        }
+
+        # Test with realistic permutation count
+        batch_n_perms <- min(200, effective_calibration_perms)
+
+        start_batch <- Sys.time()
+        batch_result <- tryCatch({
+          batch_test_candidates_fast(
+            networks_g1 = networks_g1,
+            networks_g2 = networks_g2,
+            node_names = node_names,
+            candidates_list = batch_candidates,
+            n_permutations = batch_n_perms,
+            n_threads = 0,  # Auto-detect
+            progress_callback = NULL  # No progress for calibration
+          )
+        }, error = function(e) NULL)
+
+        if (!is.null(batch_result)) {
+          batch_elapsed_ms <- as.numeric(difftime(Sys.time(), start_batch, units = "secs")) * 1000
+          batch_time_per_candidate_ms <- batch_elapsed_ms / n_batch_candidates
+          batch_time_per_perm_candidate_ms <- batch_time_per_candidate_ms / (batch_n_perms + 1)
+
+          if (verbose) {
+            message("  Batch mode: ", round(batch_time_per_candidate_ms, 2), " ms/candidate",
+                    " (", round(batch_time_per_perm_candidate_ms, 4), " ms/perm)")
+          }
+
+          # If batch mode is significantly slower than single-candidate, use batch timing
+          # This captures real-world overhead (memory pressure, cache effects)
+          if (batch_time_per_perm_candidate_ms > cpp_serial_time_per_perm * 1.5) {
+            if (verbose) {
+              message("  NOTE: Batch mode ", round(batch_time_per_perm_candidate_ms / cpp_serial_time_per_perm, 1),
+                      "x slower than single-candidate - using batch timing for estimates")
+            }
+            cpp_serial_time_per_perm <- batch_time_per_perm_candidate_ms
+          }
+        }
+      }
+
       # ========== MEASURE ENUMERATION TIME (Phase 1 of brute force) ==========
       # Test with multiple combination sizes for accurate scaling
       if (verbose) message("  Measuring enumeration time (multiple combination sizes)...")
@@ -645,7 +729,10 @@ calibrate_parallel_performance <- function(analysis_results,
         time_per_perm_ms = cpp_time_per_perm,
         # Serial time per perm for batch mode estimation
         # Batch mode parallelizes CANDIDATES, so permutations within each candidate run serially
+        # NOTE: This may be updated from batch calibration if batch mode is significantly slower
         cpp_serial_time_per_perm_ms = cpp_serial_time_per_perm,
+        # Batch mode timing (if measured) - more accurate for actual workload
+        batch_time_per_candidate_ms = batch_time_per_candidate_ms,
         r_time_per_perm_ms = r_time_per_perm,
         # Timing breakdown by combination size (for detailed analysis)
         perm_times_by_size = perm_times_by_size,
