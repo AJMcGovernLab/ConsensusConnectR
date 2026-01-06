@@ -10181,6 +10181,7 @@ server <- function(input, output, session) {
 
     } else if(input$regional_contrib_level == "artificial") {
       # ===== BRUTE FORCE ARTIFICIAL BRAIN AREA DISCOVERY (EXPLORATORY) =====
+      # Uses file-based progress for C++ backend (single call, most efficient)
 
       tryCatch({
         # Get brute force settings
@@ -10195,6 +10196,9 @@ server <- function(input, output, session) {
         seed <- input$regional_contrib_seed
         if(is.null(seed)) seed <- 42
 
+        # Create progress file for C++ atomic progress tracking
+        progress_file <- create_progress_file()
+
         # Run brute force discovery with progress
         withProgress(message = "Artificial Brain Area Discovery", value = 0, {
 
@@ -10202,11 +10206,10 @@ server <- function(input, output, session) {
 
           # Get parallel processing settings
           use_parallel <- isTRUE(input$use_parallel_processing)
-          # Support "auto" mode or specific worker count
           n_workers <- if(use_parallel) {
             worker_input <- input$n_parallel_workers
             if(is.null(worker_input) || worker_input == "auto") {
-              "auto"  # Let brute_force_discovery determine optimal
+              "auto"
             } else {
               as.numeric(worker_input)
             }
@@ -10217,6 +10220,8 @@ server <- function(input, output, session) {
           # Get calibration data if available
           calibration <- ui_state$calibration_data
 
+          # Run brute force discovery with file-based progress for C++ backend
+          # This is the most efficient mode: single C++ call with atomic progress writes
           brute_result <- brute_force_discovery(
             analysis_results = analysis_data,
             group1 = input$regional_contrib_group1,
@@ -10225,25 +10230,32 @@ server <- function(input, output, session) {
             n_permutations = n_perms,
             candidate_filter = candidate_filter,
             correction_method = input$discovery_correction_method,
+            progress_file = progress_file,  # File-based progress for C++ backend
             progress_callback = function(p) {
+              # Enumeration phase (p < 0.5) uses withProgress
               if(p < 0.5) {
                 setProgress(0.02 + p * 0.46, detail = paste0("Enumerating combinations... ", round(p * 100), "%"))
-              } else {
-                # Detect if C++ backend is active for more informative message
+              } else if(p == 0.5) {
+                # Starting permutation testing - single fast C++ call
                 cpp_active <- exists("CPP_BACKEND_AVAILABLE") && CPP_BACKEND_AVAILABLE
-                backend_label <- if(cpp_active) "C++ permutation testing" else "Permutation testing"
-                perm_pct <- round((p - 0.5) * 200)
-                setProgress(0.50 + (p - 0.5) * 0.46, detail = paste0(backend_label, "... ", perm_pct, "%"))
+                backend_label <- if(cpp_active) "C++ permutation testing (optimized)" else "Permutation testing"
+                setProgress(0.50, detail = paste0(backend_label, "..."))
               }
+              # During C++ execution, progress can't update (R is blocked)
+              # but the computation runs at maximum speed without chunking overhead
             },
             seed = seed,
-            methods = methods,  # Pass selected methods
+            methods = methods,
             use_parallel = use_parallel,
             n_workers = n_workers,
-            calibration = calibration  # Pass calibration data for adaptive worker selection
+            calibration = calibration
           )
 
           setProgress(0.98, detail = "Finalizing...")
+
+          # Clean up progress files
+          cleanup_progress_file(paste0(progress_file, "_dissim"))
+          cleanup_progress_file(paste0(progress_file, "_sim"))
 
           # Get correlation matrices for visualization (both groups + average)
           avg_cor <- NULL

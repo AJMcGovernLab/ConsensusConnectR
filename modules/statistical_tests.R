@@ -3678,6 +3678,7 @@ brute_force_discovery <- function(analysis_results,
                                    candidate_filter = "all",
                                    correction_method = "fdr",
                                    progress_callback = NULL,
+                                   progress_file = NULL,  # File path for C++ atomic progress updates
                                    seed = 42,
                                    methods = NULL,
                                    use_parallel = FALSE,
@@ -4042,6 +4043,7 @@ brute_force_discovery <- function(analysis_results,
 
       batch_start_time <- Sys.time()
 
+      # Use file-based progress if available (most efficient), otherwise callback
       batch_results <- batch_test_candidates_fast(
         networks_g1 = networks_flat_g1,
         networks_g2 = networks_flat_g2,
@@ -4049,11 +4051,14 @@ brute_force_discovery <- function(analysis_results,
         candidates_list = top_dissim$nodes_list,
         n_permutations = n_permutations,
         n_threads = 0,  # Auto-detect
-        progress_callback = function(p) {
-          if(!is.null(progress_callback)) {
-            progress_callback(0.5 + (p * 0.25))  # 50-75% for dissimilarity
+        progress_file = if(!is.null(progress_file)) paste0(progress_file, "_dissim") else NULL,
+        progress_callback = if(is.null(progress_file)) {
+          function(p) {
+            if(!is.null(progress_callback)) {
+              progress_callback(0.5 + (p * 0.25))  # 50-75% for dissimilarity
+            }
           }
-        }
+        } else NULL
       )
 
       top_dissim$p_value <- batch_results$p_value
@@ -4097,6 +4102,7 @@ brute_force_discovery <- function(analysis_results,
 
       batch_start_time <- Sys.time()
 
+      # Use file-based progress if available (most efficient), otherwise callback
       batch_results <- batch_test_candidates_fast(
         networks_g1 = networks_flat_g1,
         networks_g2 = networks_flat_g2,
@@ -4104,11 +4110,14 @@ brute_force_discovery <- function(analysis_results,
         candidates_list = top_sim$nodes_list,
         n_permutations = n_permutations,
         n_threads = 0,  # Auto-detect
-        progress_callback = function(p) {
-          if(!is.null(progress_callback)) {
-            progress_callback(0.75 + (p * 0.25))  # 75-100% for similarity
+        progress_file = if(!is.null(progress_file)) paste0(progress_file, "_sim") else NULL,
+        progress_callback = if(is.null(progress_file)) {
+          function(p) {
+            if(!is.null(progress_callback)) {
+              progress_callback(0.75 + (p * 0.25))  # 75-100% for similarity
+            }
           }
-        }
+        } else NULL
       )
 
       top_sim$p_value <- batch_results$p_value
