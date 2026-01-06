@@ -2531,7 +2531,16 @@ create_results_ui <- function() {
                   DT::dataTableOutput("roiPermutationTable", height = "400px"),
 
                   h5("Summary Statistics"),
-                  verbatimTextOutput("roiPermutationSummary")
+                  verbatimTextOutput("roiPermutationSummary"),
+
+                  hr(),
+
+                  h5("Download Results"),
+                  tags$p("Download all plots, data tables, and summary from this analysis as a ZIP file.",
+                         style = "font-size: 0.9em; color: #666;"),
+                  downloadButton("download_roi_permutation_results",
+                                "Download All Results",
+                                class = "btn-success")
                 ),
 
                 tabPanel("7b. Hub Overlap Analysis",
@@ -2580,7 +2589,16 @@ create_results_ui <- function() {
                   DT::dataTableOutput("hubOverlapTable", height = "400px"),
 
                   h5("Summary Statistics"),
-                  verbatimTextOutput("hubOverlapSummary")
+                  verbatimTextOutput("hubOverlapSummary"),
+
+                  hr(),
+
+                  h5("Download Results"),
+                  tags$p("Download all plots, data tables, and summary from this analysis as a ZIP file.",
+                         style = "font-size: 0.9em; color: #666;"),
+                  downloadButton("download_hub_overlap_results",
+                                "Download All Results",
+                                class = "btn-success")
                 ),
 
                 tabPanel("7c. Global Network Permutation Testing",
@@ -14724,6 +14742,127 @@ server <- function(input, output, session) {
     }
   })
 
+  # Download handler for ROI-Level Permutation Test results
+  output$download_roi_permutation_results <- downloadHandler(
+    filename = function() {
+      paste0("ROI_PermutationTest_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".zip")
+    },
+    content = function(file) {
+      roi_results <- roi_permutation_results()
+
+      if(is.null(roi_results)) {
+        showNotification("No ROI permutation results available. Run the analysis first.",
+                        type = "error", duration = 5)
+        return()
+      }
+
+      # Create temporary directory
+      temp_base <- tempfile(pattern = "ROI_Permutation_")
+      dir.create(temp_base, recursive = TRUE, showWarnings = FALSE)
+
+      tryCatch({
+        results_df <- roi_results$results
+
+        # ==========================================
+        # 1. SAVE PLOT AS PNG
+        # ==========================================
+        plot_file <- file.path(temp_base, "ROI_PermutationTest_SignificancePlot.png")
+        png(plot_file, width = 12, height = 8, units = "in", res = 300)
+        render_roi_permutation_results(roi_results)
+        dev.off()
+
+        # ==========================================
+        # 2. SAVE RESULTS TABLE AS CSV
+        # ==========================================
+        write.csv(results_df,
+                  file.path(temp_base, "ROI_PermutationTest_Results.csv"),
+                  row.names = FALSE)
+
+        # ==========================================
+        # 3. SAVE SUMMARY TEXT FILE
+        # ==========================================
+        summary_file <- file.path(temp_base, "ROI_PermutationTest_Summary.txt")
+        sink(summary_file)
+
+        cat("ROI-LEVEL PERMUTATION TEST SUMMARY\n")
+        cat("==================================\n\n")
+        cat(sprintf("Generated: %s\n\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S")))
+
+        cat("ANALYSIS PARAMETERS\n")
+        cat("-------------------\n")
+        cat(sprintf("Comparison: %s vs %s\n", roi_results$group1_name, roi_results$group2_name))
+        cat(sprintf("Number of permutations: %d\n", roi_results$n_permutations))
+        cat(sprintf("Correction method: %s\n", roi_results$correction_method))
+
+        n_total <- nrow(results_df)
+        n_sig <- sum(results_df$Significant, na.rm = TRUE)
+
+        cat(sprintf("\nTotal ROIs tested: %d\n", n_total))
+        cat(sprintf("Significant ROIs (FDR p < 0.05): %d (%.1f%%)\n\n", n_sig, 100 * n_sig / n_total))
+
+        cat("SIGNIFICANT ROIs\n")
+        cat("----------------\n")
+        if(n_sig > 0) {
+          sig_rois <- results_df[results_df$Significant, ]
+          sig_rois <- sig_rois[order(sig_rois$P_Adjusted), ]
+
+          for(i in 1:nrow(sig_rois)) {
+            cat(sprintf("%d. %s\n", i, sig_rois$ROI[i]))
+            cat(sprintf("   Mean %s: %.4f | Mean %s: %.4f\n",
+                       roi_results$group1_name, sig_rois$Mean_Group1[i],
+                       roi_results$group2_name, sig_rois$Mean_Group2[i]))
+            cat(sprintf("   Difference: %.4f | Cohen's d: %.3f\n",
+                       sig_rois$Difference[i], sig_rois$Cohen_d[i]))
+            cat(sprintf("   p-value: %.2e | q-value: %.2e\n\n",
+                       sig_rois$P_Value[i], sig_rois$P_Adjusted[i]))
+          }
+        } else {
+          cat("No ROIs reached significance after FDR correction.\n")
+        }
+
+        cat("\nINTERPRETATION\n")
+        cat("--------------\n")
+        cat("Significant ROIs show reliable differences in connectivity strength between groups.\n")
+        cat("Cohen's d effect sizes: |d| < 0.2 = negligible, 0.2-0.5 = small, 0.5-0.8 = medium, > 0.8 = large\n")
+        cat("P-values are FDR-corrected for multiple comparisons.\n")
+
+        sink()
+
+        # ==========================================
+        # 4. CREATE ZIP FILE
+        # ==========================================
+        files_to_zip <- list.files(temp_base, full.names = TRUE)
+        file_names <- basename(files_to_zip)
+
+        old_wd <- getwd()
+        setwd(temp_base)
+
+        zip_result <- utils::zip(
+          zipfile = file,
+          files = file_names,
+          flags = "-r9Xq"
+        )
+
+        setwd(old_wd)
+
+        if(zip_result != 0) {
+          tar_file <- sub("\\.zip$", ".tar.gz", file)
+          tar(tar_file, files = files_to_zip, compression = "gzip")
+          file.rename(tar_file, file)
+        }
+
+        showNotification("Download ready! ZIP contains plot, data, and summary.",
+                        type = "message", duration = 3)
+
+      }, error = function(e) {
+        showNotification(sprintf("Error creating download: %s", e$message),
+                        type = "error", duration = 5)
+      }, finally = {
+        unlink(temp_base, recursive = TRUE)
+      })
+    }
+  )
+
   # Tab 8b: Hub Overlap Analysis
 
   # Reactive: Compute hub overlap statistics
@@ -14911,6 +15050,161 @@ server <- function(input, output, session) {
     cat(sprintf("  Min Jaccard index: %.3f\n", overlap_stats$summary_stats$min_jaccard))
     cat(sprintf("  Max Jaccard index: %.3f\n", overlap_stats$summary_stats$max_jaccard))
   })
+
+  # Download handler for Hub Overlap Analysis results
+  output$download_hub_overlap_results <- downloadHandler(
+    filename = function() {
+      paste0("HubOverlapAnalysis_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".zip")
+    },
+    content = function(file) {
+      hub_results <- hub_overlap_results()
+
+      if(is.null(hub_results)) {
+        showNotification("No hub overlap results available. Run the analysis first.",
+                        type = "error", duration = 5)
+        return()
+      }
+
+      # Create temporary directory
+      temp_base <- tempfile(pattern = "HubOverlap_")
+      dir.create(temp_base, recursive = TRUE, showWarnings = FALSE)
+
+      tryCatch({
+        overlap_stats <- hub_results$overlap_stats
+        hub_sets <- overlap_stats$hub_sets
+
+        # ==========================================
+        # 1. SAVE VENN DIAGRAM PLOT
+        # ==========================================
+        plot_file <- file.path(temp_base, "HubOverlap_VennDiagrams.png")
+        png(plot_file, width = 12, height = 10, units = "in", res = 300)
+        render_hub_overlap_venn(overlap_stats)
+        dev.off()
+
+        # ==========================================
+        # 2. SAVE JACCARD MATRIX HEATMAP
+        # ==========================================
+        plot_file2 <- file.path(temp_base, "HubOverlap_JaccardMatrix.png")
+        png(plot_file2, width = 10, height = 8, units = "in", res = 300)
+        render_hub_overlap_matrix(overlap_stats)
+        dev.off()
+
+        # ==========================================
+        # 3. SAVE JACCARD MATRIX AS CSV
+        # ==========================================
+        jaccard_mat <- overlap_stats$jaccard_matrix
+        write.csv(jaccard_mat,
+                  file.path(temp_base, "HubOverlap_JaccardMatrix.csv"),
+                  row.names = TRUE)
+
+        # ==========================================
+        # 4. SAVE HUB LISTS AS CSV
+        # ==========================================
+        hub_list_df <- data.frame(
+          Group = character(),
+          Hub = character(),
+          stringsAsFactors = FALSE
+        )
+        for(group in names(hub_sets)) {
+          if(length(hub_sets[[group]]) > 0) {
+            hub_list_df <- rbind(hub_list_df, data.frame(
+              Group = group,
+              Hub = hub_sets[[group]],
+              stringsAsFactors = FALSE
+            ))
+          }
+        }
+        write.csv(hub_list_df,
+                  file.path(temp_base, "HubOverlap_HubLists.csv"),
+                  row.names = FALSE)
+
+        # ==========================================
+        # 5. SAVE SUMMARY TEXT FILE
+        # ==========================================
+        summary_file <- file.path(temp_base, "HubOverlap_Summary.txt")
+        sink(summary_file)
+
+        cat("HUB OVERLAP ANALYSIS SUMMARY\n")
+        cat("============================\n\n")
+        cat(sprintf("Generated: %s\n\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S")))
+
+        cat("ANALYSIS PARAMETERS\n")
+        cat("-------------------\n")
+        cat(sprintf("Analysis approach: %s\n", hub_results$approach))
+        cat(sprintf("Correlation method: %s\n", hub_results$method))
+        cat(sprintf("Z-score threshold: %.2f\n", hub_results$z_threshold))
+        cat(sprintf("Number of groups: %d\n\n", length(hub_sets)))
+
+        cat("HUB COUNTS PER GROUP\n")
+        cat("--------------------\n")
+        for(group in names(hub_sets)) {
+          cat(sprintf("  %s: %d hubs\n", group, length(hub_sets[[group]])))
+          if(length(hub_sets[[group]]) > 0 && length(hub_sets[[group]]) <= 10) {
+            cat(sprintf("    Hubs: %s\n", paste(hub_sets[[group]], collapse = ", ")))
+          }
+        }
+
+        cat("\nPAIRWISE JACCARD INDICES\n")
+        cat("------------------------\n")
+        n_groups <- nrow(jaccard_mat)
+        for(i in 1:(n_groups - 1)) {
+          for(j in (i + 1):n_groups) {
+            cat(sprintf("  %s vs %s: J = %.3f\n",
+                       rownames(jaccard_mat)[i],
+                       rownames(jaccard_mat)[j],
+                       jaccard_mat[i, j]))
+          }
+        }
+
+        cat("\nOVERALL STATISTICS\n")
+        cat("------------------\n")
+        cat(sprintf("  Mean Jaccard index: %.3f\n", overlap_stats$summary_stats$mean_jaccard))
+        cat(sprintf("  SD Jaccard index: %.3f\n", overlap_stats$summary_stats$sd_jaccard))
+        cat(sprintf("  Min Jaccard index: %.3f\n", overlap_stats$summary_stats$min_jaccard))
+        cat(sprintf("  Max Jaccard index: %.3f\n", overlap_stats$summary_stats$max_jaccard))
+
+        cat("\nINTERPRETATION\n")
+        cat("--------------\n")
+        cat("Jaccard index ranges from 0 (no overlap) to 1 (perfect overlap).\n")
+        cat("High Jaccard (> 0.5): Hubs are conserved across groups.\n")
+        cat("Low Jaccard (< 0.3): Hubs are group-specific, indicating network reorganization.\n")
+
+        sink()
+
+        # ==========================================
+        # 6. CREATE ZIP FILE
+        # ==========================================
+        files_to_zip <- list.files(temp_base, full.names = TRUE)
+        file_names <- basename(files_to_zip)
+
+        old_wd <- getwd()
+        setwd(temp_base)
+
+        zip_result <- utils::zip(
+          zipfile = file,
+          files = file_names,
+          flags = "-r9Xq"
+        )
+
+        setwd(old_wd)
+
+        if(zip_result != 0) {
+          tar_file <- sub("\\.zip$", ".tar.gz", file)
+          tar(tar_file, files = files_to_zip, compression = "gzip")
+          file.rename(tar_file, file)
+        }
+
+        showNotification("Download ready! ZIP contains plots, data, and summary.",
+                        type = "message", duration = 3)
+
+      }, error = function(e) {
+        showNotification(sprintf("Error creating download: %s", e$message),
+                        type = "error", duration = 5)
+      }, finally = {
+        unlink(temp_base, recursive = TRUE)
+      })
+    }
+  )
 
   # Tab 8c: Global Network Permutation Testing
 
