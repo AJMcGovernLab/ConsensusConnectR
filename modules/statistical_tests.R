@@ -828,9 +828,11 @@ determine_optimal_workers <- function(n_candidates,
     compute_time_ms <- calibration$time_per_perm_ms
     spawn_overhead_ms <- calibration$spawn_overhead_per_worker_ms
   } else {
-    # Formula-based estimate
-    compute_time_ms <- 0.5 + (n_nodes^2 * n_matrices * 0.00005)
-    spawn_overhead_ms <- 3000  # Conservative Windows default
+    # Formula-based estimate - UPDATED for optimized C++ backend (Jan 2026)
+    # Old values (pre-optimization): base=0.5, factor=0.00005
+    # New values: ~100x faster due to memory optimization
+    compute_time_ms <- 0.005 + (n_nodes^2 * n_matrices * 0.0000006)
+    spawn_overhead_ms <- 3000  # Conservative Windows default (only applies to R parallel)
   }
 
   # Total serial computation time

@@ -1077,7 +1077,7 @@ create_summary_ui <- function() {
                                                    paste0(parallelly::availableCores(), " (All)")))),
                               selected = "auto"),
                   tags$small(id = "worker_recommendation",
-                            "Auto mode selects optimal worker count based on calibration",
+                            "Auto mode uses C++ OpenMP threads if available, otherwise R workers",
                             style = "color: #666;")
                 ),
 
