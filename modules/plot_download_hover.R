@@ -1842,20 +1842,25 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
           )
         } else if(viz_type == "split") {
           # Split circle view: similarity regions vs dissimilarity regions
-          avg_thresh <- NULL
-          if(!is.null(analysis_results$group_thresholds)) {
-            thresholds <- unlist(analysis_results$group_thresholds)
-            if(length(thresholds) > 0) {
-              avg_thresh <- mean(thresholds, na.rm = TRUE)
-            }
-          }
+          # Calculate percolation threshold from the average correlation matrix
+          computed_thresh <- tryCatch({
+            calculate_percolation_threshold(results$avg_cor)
+          }, error = function(e) {
+            # Fallback to median of non-zero values
+            nz_vals <- abs(results$avg_cor)[abs(results$avg_cor) > 0]
+            if(length(nz_vals) > 0) quantile(nz_vals, 0.5, na.rm = TRUE) else 0.3
+          })
+
+          # Get user's selected number of splits
+          n_splits <- as.integer(input$contrib_viz_n_splits %||% 2)
 
           plot_contribution_network_split(
             avg_cor = results$avg_cor,
             node_summary = node_summary,
             brain_areas = ui_state$brain_areas,
             area_colors = ui_state$area_colors,
-            threshold = avg_thresh,
+            threshold = computed_thresh,
+            n_splits = n_splits,
             show_inter_edges = input$contrib_viz_show_inter %||% TRUE,
             group1_name = results$group1_name,
             group2_name = results$group2_name

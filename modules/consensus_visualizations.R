@@ -1703,12 +1703,14 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
 #' @param brain_areas List mapping area names to region vectors
 #' @param area_colors Named vector of colors for each brain area
 #' @param threshold Correlation threshold for edges (NULL = use median)
-#' @param show_inter_edges Whether to show edges between the two circles
+#' @param n_splits Number of divisions (2-5): 2=sim/dissim, 3=strong sim/neutral/strong dissim, etc.
+#' @param show_inter_edges Whether to show edges between circles
 #' @param group1_name Name for similarity group label
 #' @param group2_name Name for dissimilarity group label
 plot_contribution_network_split <- function(avg_cor, node_summary,
                                             brain_areas = NULL, area_colors = NULL,
                                             threshold = NULL,
+                                            n_splits = 2,
                                             show_inter_edges = TRUE,
                                             group1_name = "Group 1",
                                             group2_name = "Group 2") {
@@ -1731,28 +1733,67 @@ plot_contribution_network_split <- function(avg_cor, node_summary,
     return()
   }
 
-  # Classify nodes by contribution direction
-  # direction_ratio < 0 = similarity driver, > 0 = dissimilarity driver
-  sim_nodes <- node_summary$node[node_summary$direction_ratio < 0]
-  dissim_nodes <- node_summary$node[node_summary$direction_ratio > 0]
-  # Balanced nodes (ratio = 0) go to the smaller group for balance
-  balanced_nodes <- node_summary$node[node_summary$direction_ratio == 0]
-  if(length(balanced_nodes) > 0) {
-    if(length(sim_nodes) <= length(dissim_nodes)) {
-      sim_nodes <- c(sim_nodes, balanced_nodes)
-    } else {
-      dissim_nodes <- c(dissim_nodes, balanced_nodes)
+  # Validate n_splits
+  n_splits <- as.integer(n_splits)
+  if(n_splits < 2) n_splits <- 2
+  if(n_splits > 5) n_splits <- 5
+
+  # Define split configurations
+  # Colors: blue spectrum for similarity, red spectrum for dissimilarity
+  split_configs <- list(
+    "2" = list(
+      labels = c("Similarity\nDrivers", "Dissimilarity\nDrivers"),
+      colors = c("#2980B9", "#C0392B"),
+      breaks = c(-Inf, 0, Inf)
+    ),
+    "3" = list(
+      labels = c("Strong\nSimilarity", "Neutral", "Strong\nDissimilarity"),
+      colors = c("#1A5276", "#7F8C8D", "#922B21"),
+      breaks = NULL  # Will be computed from quantiles
+    ),
+    "4" = list(
+      labels = c("Strong\nSimilarity", "Weak\nSimilarity", "Weak\nDissimilarity", "Strong\nDissimilarity"),
+      colors = c("#1A5276", "#5DADE2", "#E74C3C", "#922B21"),
+      breaks = NULL
+    ),
+    "5" = list(
+      labels = c("Very Strong\nSimilarity", "Similarity", "Neutral", "Dissimilarity", "Very Strong\nDissimilarity"),
+      colors = c("#0B3D5F", "#2980B9", "#7F8C8D", "#C0392B", "#641E16"),
+      breaks = NULL
+    )
+  )
+
+  config <- split_configs[[as.character(n_splits)]]
+
+  # Compute breaks based on direction_ratio quantiles
+  ratios <- node_summary$direction_ratio
+  if(is.null(config$breaks)) {
+    if(n_splits == 3) {
+      # Tertiles: bottom third, middle third, top third
+      config$breaks <- c(-Inf, quantile(ratios, 1/3), quantile(ratios, 2/3), Inf)
+    } else if(n_splits == 4) {
+      # Quartiles
+      config$breaks <- c(-Inf, quantile(ratios, 0.25), quantile(ratios, 0.5),
+                         quantile(ratios, 0.75), Inf)
+    } else if(n_splits == 5) {
+      # Quintiles
+      config$breaks <- c(-Inf, quantile(ratios, 0.2), quantile(ratios, 0.4),
+                         quantile(ratios, 0.6), quantile(ratios, 0.8), Inf)
     }
   }
 
-  if(length(sim_nodes) == 0 && length(dissim_nodes) == 0) {
-    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
-    text(1, 1, "No nodes to display", cex = 1.1, col = "gray50")
-    return()
-  }
+  # Assign nodes to groups based on direction_ratio
+  node_groups <- cut(ratios, breaks = config$breaks, labels = 1:n_splits, include.lowest = TRUE)
+  node_summary$group <- as.integer(node_groups)
+
+  # Create list of nodes per group
+  group_nodes <- lapply(1:n_splits, function(g) {
+    node_summary$node[node_summary$group == g]
+  })
+  names(group_nodes) <- config$labels
 
   # Get all significant nodes
-  all_sig_nodes <- c(sim_nodes, dissim_nodes)
+  all_sig_nodes <- node_summary$node
   all_nodes <- rownames(avg_cor)
   if(is.null(all_nodes)) all_nodes <- colnames(avg_cor)
 
@@ -1808,40 +1849,37 @@ plot_contribution_network_split <- function(avg_cor, node_summary,
     return("#808080")  # Default gray
   }
 
-  # Create circular layouts for each group
-  n_sim <- length(sim_nodes)
-  n_dissim <- length(dissim_nodes)
+  # Create node to group mapping
+  node_to_group <- setNames(node_summary$group, node_summary$node)
 
-  # Position nodes: left circle for similarity, right circle for dissimilarity
-  # Circle centers
-  left_center <- c(-1.5, 0)
-  right_center <- c(1.5, 0)
-  radius <- 1.0
+  # Calculate circle positions based on n_splits
+  # Spread circles evenly across x-axis
+  total_width <- 2.5 * n_splits
+  circle_centers <- lapply(1:n_splits, function(i) {
+    x <- -total_width/2 + (i - 0.5) * (total_width / n_splits)
+    c(x, 0)
+  })
+  radius <- min(1.0, 2.5 / n_splits)
 
   # Generate coordinates
   coords <- matrix(0, nrow = length(node_names), ncol = 2)
   rownames(coords) <- node_names
 
-  # Left circle (similarity nodes)
-  if(n_sim > 0) {
-    angles_sim <- seq(0, 2*pi, length.out = n_sim + 1)[1:n_sim]
-    for(i in seq_along(sim_nodes)) {
-      if(sim_nodes[i] %in% node_names) {
-        idx <- which(node_names == sim_nodes[i])
-        coords[idx, 1] <- left_center[1] + radius * cos(angles_sim[i])
-        coords[idx, 2] <- left_center[2] + radius * sin(angles_sim[i])
-      }
-    }
-  }
+  for(g in 1:n_splits) {
+    g_nodes <- group_nodes[[g]]
+    g_nodes_in_matrix <- g_nodes[g_nodes %in% node_names]
+    n_g <- length(g_nodes_in_matrix)
 
-  # Right circle (dissimilarity nodes)
-  if(n_dissim > 0) {
-    angles_dissim <- seq(0, 2*pi, length.out = n_dissim + 1)[1:n_dissim]
-    for(i in seq_along(dissim_nodes)) {
-      if(dissim_nodes[i] %in% node_names) {
-        idx <- which(node_names == dissim_nodes[i])
-        coords[idx, 1] <- right_center[1] + radius * cos(angles_dissim[i])
-        coords[idx, 2] <- right_center[2] + radius * sin(angles_dissim[i])
+    if(n_g > 0) {
+      angles <- seq(0, 2*pi, length.out = n_g + 1)[1:n_g]
+      center <- circle_centers[[g]]
+
+      for(i in seq_along(g_nodes_in_matrix)) {
+        idx <- which(node_names == g_nodes_in_matrix[i])
+        if(length(idx) > 0) {
+          coords[idx, 1] <- center[1] + radius * cos(angles[i])
+          coords[idx, 2] <- center[2] + radius * sin(angles[i])
+        }
       }
     }
   }
@@ -1853,11 +1891,11 @@ plot_contribution_network_split <- function(avg_cor, node_summary,
   par(mar = c(4, 1, 3, 1))
 
   # Set up plot area
-  xlim <- c(-3.2, 3.2)
+  xlim <- c(-total_width/2 - 1.5, total_width/2 + 1.5)
   ylim <- c(-2, 2.5)
   plot(NULL, xlim = xlim, ylim = ylim, asp = 1,
        xlab = "", ylab = "", axes = FALSE,
-       main = "Contribution Network: Similarity vs Dissimilarity Regions")
+       main = sprintf("Contribution Network: %d-Way Split by Direction", n_splits))
 
   # Draw edges
   for(i in 1:(length(node_names)-1)) {
@@ -1866,31 +1904,23 @@ plot_contribution_network_split <- function(avg_cor, node_summary,
         n1 <- node_names[i]
         n2 <- node_names[j]
 
-        # Determine edge type
-        n1_is_sim <- n1 %in% sim_nodes
-        n2_is_sim <- n2 %in% sim_nodes
+        g1 <- node_to_group[n1]
+        g2 <- node_to_group[n2]
 
         # Edge width based on correlation
         edge_width <- 1 + abs_cor[i, j] * 3
 
-        if(n1_is_sim && n2_is_sim) {
-          # Both in similarity circle - dark blue solid
+        if(g1 == g2) {
+          # Same group - use group color
+          edge_color <- config$colors[g1]
           segments(coords[i, 1], coords[i, 2], coords[j, 1], coords[j, 2],
-                   col = "#2980B9", lwd = edge_width)
-        } else if(!n1_is_sim && !n2_is_sim) {
-          # Both in dissimilarity circle - dark red solid
-          segments(coords[i, 1], coords[i, 2], coords[j, 1], coords[j, 2],
-                   col = "#C0392B", lwd = edge_width)
+                   col = edge_color, lwd = edge_width)
         } else if(show_inter_edges) {
-          # Inter-circle edge - lighter dashed
-          # Use lighter color based on which node drives the connection
-          if(n1_is_sim) {
-            edge_color <- adjustcolor("#5DADE2", alpha.f = 0.6)  # Light blue
-          } else {
-            edge_color <- adjustcolor("#E74C3C", alpha.f = 0.6)  # Light red
-          }
+          # Inter-group edge - lighter, dashed
+          # Blend colors of the two groups
+          avg_col <- adjustcolor(config$colors[ceiling((g1 + g2) / 2)], alpha.f = 0.5)
           segments(coords[i, 1], coords[i, 2], coords[j, 1], coords[j, 2],
-                   col = edge_color, lwd = edge_width * 0.7, lty = 2)
+                   col = avg_col, lwd = edge_width * 0.6, lty = 2)
         }
       }
     }
@@ -1898,29 +1928,32 @@ plot_contribution_network_split <- function(avg_cor, node_summary,
 
   # Draw nodes
   node_colors <- sapply(node_names, get_node_color)
-  points(coords[, 1], coords[, 2], pch = 21, cex = 3,
+  node_cex <- if(n_splits <= 3) 3 else 2.5
+  points(coords[, 1], coords[, 2], pch = 21, cex = node_cex,
          bg = node_colors, col = "gray30", lwd = 1.5)
 
   # Add node labels
-  text(coords[, 1], coords[, 2], labels = node_names, cex = 0.55, font = 2)
+  label_cex <- if(n_splits <= 3) 0.55 else 0.45
+  text(coords[, 1], coords[, 2], labels = node_names, cex = label_cex, font = 2)
 
   # Add circle labels
-  text(left_center[1], left_center[2] + radius + 0.4,
-       paste0("Similarity Drivers\n(n=", n_sim, ")"),
-       cex = 0.9, font = 2, col = "#2980B9")
-  text(right_center[1], right_center[2] + radius + 0.4,
-       paste0("Dissimilarity Drivers\n(n=", n_dissim, ")"),
-       cex = 0.9, font = 2, col = "#C0392B")
+  for(g in 1:n_splits) {
+    center <- circle_centers[[g]]
+    n_in_group <- length(group_nodes[[g]])
+    text(center[1], center[2] + radius + 0.4,
+         paste0(config$labels[g], "\n(n=", n_in_group, ")"),
+         cex = 0.8, font = 2, col = config$colors[g])
+  }
 
-  # Add legend
-  legend_items <- c("Intra-similarity edges", "Intra-dissimilarity edges")
-  legend_cols <- c("#2980B9", "#C0392B")
-  legend_lty <- c(1, 1)
-  legend_lwd <- c(2, 2)
+  # Add legend for edge types
+  legend_items <- "Intra-group edges"
+  legend_cols <- "gray50"
+  legend_lty <- 1
+  legend_lwd <- 2
 
   if(show_inter_edges) {
     legend_items <- c(legend_items, "Inter-group edges")
-    legend_cols <- c(legend_cols, "gray50")
+    legend_cols <- c(legend_cols, "gray70")
     legend_lty <- c(legend_lty, 2)
     legend_lwd <- c(legend_lwd, 1.5)
   }
@@ -1930,7 +1963,7 @@ plot_contribution_network_split <- function(avg_cor, node_summary,
          col = legend_cols,
          lty = legend_lty,
          lwd = legend_lwd,
-         cex = 0.75,
+         cex = 0.7,
          horiz = TRUE,
          bty = "n")
 
@@ -1946,25 +1979,37 @@ plot_contribution_network_split <- function(avg_cor, node_summary,
              legend = present_areas,
              fill = area_colors[present_areas],
              title = "Brain Area",
-             cex = 0.7,
+             cex = 0.65,
              bty = "n")
     }
   }
 
-  # Subtitle with stats
-  n_sim_edges <- sum(sapply(1:(length(node_names)-1), function(i) {
-    sum(sapply((i+1):length(node_names), function(j) {
-      if(binary_adj[i, j] == 1 && node_names[i] %in% sim_nodes && node_names[j] %in% sim_nodes) 1 else 0
-    }))
-  }))
-  n_dissim_edges <- sum(sapply(1:(length(node_names)-1), function(i) {
-    sum(sapply((i+1):length(node_names), function(j) {
-      if(binary_adj[i, j] == 1 && !node_names[i] %in% sim_nodes && !node_names[j] %in% sim_nodes) 1 else 0
-    }))
-  }))
-  n_inter_edges <- sum(binary_adj[upper.tri(binary_adj)]) - n_sim_edges - n_dissim_edges
+  # Add group color legend
+  legend("topright",
+         legend = gsub("\n", " ", config$labels),
+         fill = config$colors,
+         title = "Direction Groups",
+         cex = 0.65,
+         bty = "n")
 
-  mtext(sprintf("Edges: %d similarity, %d dissimilarity, %d inter-group | Threshold: %.3f",
-                n_sim_edges, n_dissim_edges, n_inter_edges, thresh),
-        side = 1, line = 2, cex = 0.75, col = "gray40")
+  # Subtitle with stats
+  n_intra_edges <- 0
+  n_inter_edges <- 0
+  for(i in 1:(length(node_names)-1)) {
+    for(j in (i+1):length(node_names)) {
+      if(binary_adj[i, j] == 1) {
+        g1 <- node_to_group[node_names[i]]
+        g2 <- node_to_group[node_names[j]]
+        if(g1 == g2) {
+          n_intra_edges <- n_intra_edges + 1
+        } else {
+          n_inter_edges <- n_inter_edges + 1
+        }
+      }
+    }
+  }
+
+  mtext(sprintf("Edges: %d intra-group, %d inter-group | Percolation Threshold: %.3f",
+                n_intra_edges, n_inter_edges, thresh),
+        side = 1, line = 2, cex = 0.7, col = "gray40")
 }

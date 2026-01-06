@@ -1161,6 +1161,12 @@ create_summary_ui <- function() {
                   checkboxInput("contrib_viz_synergistic", "Synergistic combinations only", FALSE),
                   conditionalPanel(
                     condition = "input.contrib_viz_type == 'split'",
+                    selectInput("contrib_viz_n_splits", "Number of Divisions:",
+                                choices = c("2 (Sim / Dissim)" = "2",
+                                          "3 (Strong Sim / Neutral / Strong Dissim)" = "3",
+                                          "4 (Strong Sim / Sim / Dissim / Strong Dissim)" = "4",
+                                          "5 (Very Strong → Very Strong)" = "5"),
+                                selected = "2"),
                     checkboxInput("contrib_viz_show_inter", "Show inter-group edges", TRUE)
                   ),
                   conditionalPanel(
@@ -11616,21 +11622,28 @@ server <- function(input, output, session) {
       )
     } else if(viz_type == "split") {
       # Split circle view: similarity regions vs dissimilarity regions
-      # Get average threshold
-      avg_thresh <- NULL
-      if(!is.null(analysis_results$group_thresholds)) {
-        thresholds <- unlist(analysis_results$group_thresholds)
-        if(length(thresholds) > 0) {
-          avg_thresh <- mean(thresholds, na.rm = TRUE)
-        }
+      # Calculate percolation threshold from the average correlation matrix
+      computed_thresh <- NULL
+      if(!is.null(results$avg_cor)) {
+        computed_thresh <- tryCatch({
+          calculate_percolation_threshold(results$avg_cor)
+        }, error = function(e) {
+          # Fallback to median if percolation calculation fails
+          nz_vals <- abs(results$avg_cor)[abs(results$avg_cor) > 0]
+          if(length(nz_vals) > 0) quantile(nz_vals, 0.5, na.rm = TRUE) else 0.3
+        })
       }
+
+      # Get number of splits from UI
+      n_splits <- as.integer(input$contrib_viz_n_splits %||% 2)
 
       plot_contribution_network_split(
         avg_cor = results$avg_cor,
         node_summary = node_summary,
         brain_areas = ui_state$brain_areas,
         area_colors = ui_state$area_colors,
-        threshold = avg_thresh,
+        threshold = computed_thresh,
+        n_splits = n_splits,
         show_inter_edges = input$contrib_viz_show_inter %||% TRUE,
         group1_name = results$group1_name,
         group2_name = results$group2_name
@@ -12268,18 +12281,25 @@ server <- function(input, output, session) {
           plot_file <- file.path(temp_base, "02_ContributionNetwork_SplitCircles.png")
           png(plot_file, width = 14, height = 10, units = "in", res = 300)
 
-          avg_thresh <- NULL
-          if(!is.null(analysis_results$group_thresholds)) {
-            thresholds <- unlist(analysis_results$group_thresholds)
-            if(length(thresholds) > 0) avg_thresh <- mean(thresholds, na.rm = TRUE)
-          }
+          # Calculate percolation threshold from the average correlation matrix
+          computed_thresh <- tryCatch({
+            calculate_percolation_threshold(results$avg_cor)
+          }, error = function(e) {
+            # Fallback to median of non-zero values
+            nz_vals <- abs(results$avg_cor)[abs(results$avg_cor) > 0]
+            if(length(nz_vals) > 0) quantile(nz_vals, 0.5, na.rm = TRUE) else 0.3
+          })
+
+          # Get user's selected number of splits
+          n_splits <- as.integer(input$contrib_viz_n_splits %||% 2)
 
           plot_contribution_network_split(
             avg_cor = results$avg_cor,
             node_summary = node_summary,
             brain_areas = ui_state$brain_areas,
             area_colors = ui_state$area_colors,
-            threshold = avg_thresh,
+            threshold = computed_thresh,
+            n_splits = n_splits,
             show_inter_edges = TRUE,
             group1_name = results$group1_name,
             group2_name = results$group2_name
