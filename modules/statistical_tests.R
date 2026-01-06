@@ -4249,51 +4249,93 @@ brute_force_discovery <- function(analysis_results,
       # Calculate progress parameters
       total_candidates <- nrow(top_dissim) + nrow(top_sim)
 
-      # Use chunk-based processing for progress updates
-      # CRITICAL: Larger chunks reduce overhead from parallel job startup
-      # Minimum: 4x workers for good load balancing
-      # Maximum: 4 progress updates for responsive UI
-      chunk_size <- max(actual_n_workers * 4, ceiling(nrow(top_dissim) / 4))
-      n_chunks <- ceiling(nrow(top_dissim) / chunk_size)
+      # ========== TIME-ADAPTIVE CHUNKING FOR R PARALLEL ==========
+      # Run pilot batch to measure speed, then size chunks for ~2 sec intervals
+      min_chunk_for_workers <- actual_n_workers * 4
+      TARGET_CHUNK_SECONDS <- 2.0
 
       p_values <- tryCatch({
         all_p_values <- numeric(nrow(top_dissim))
+        n_dissim <- nrow(top_dissim)
 
-        for(chunk_idx in 1:n_chunks) {
-          # Calculate chunk indices
-          start_idx <- (chunk_idx - 1) * chunk_size + 1
-          end_idx <- min(chunk_idx * chunk_size, nrow(top_dissim))
-          chunk_indices <- start_idx:end_idx
+        # Pilot batch to measure actual speed
+        pilot_size <- min(min_chunk_for_workers, n_dissim)
 
-          # Process this chunk in parallel
-          chunk_results <- furrr::future_map_dbl(
-            top_dissim$nodes_list[chunk_indices],
-            test_single_candidate,
-            .options = furrr::furrr_options(
-              seed = TRUE,
-              globals = list(
-                test_combined_contribution = test_combined_contribution,
-                compute_averaged_jaccard = compute_averaged_jaccard,
-                compute_jaccard_for_contribution = compute_jaccard_for_contribution,
-                networks_flat_g1 = networks_flat_g1,
-                networks_flat_g2 = networks_flat_g2,
-                node_names = node_names,
-                n_permutations = n_permutations
-              )
+        pilot_start <- Sys.time()
+        pilot_results <- furrr::future_map_dbl(
+          top_dissim$nodes_list[1:pilot_size],
+          test_single_candidate,
+          .options = furrr::furrr_options(
+            seed = TRUE,
+            globals = list(
+              test_combined_contribution = test_combined_contribution,
+              compute_averaged_jaccard = compute_averaged_jaccard,
+              compute_jaccard_for_contribution = compute_jaccard_for_contribution,
+              networks_flat_g1 = networks_flat_g1,
+              networks_flat_g2 = networks_flat_g2,
+              node_names = node_names,
+              n_permutations = n_permutations
             )
           )
+        )
+        pilot_elapsed <- as.numeric(difftime(Sys.time(), pilot_start, units = "secs"))
 
-          # Store results
-          all_p_values[chunk_indices] <- chunk_results
+        all_p_values[1:pilot_size] <- pilot_results
 
-          # Update progress (50% base + progress within permutation phase)
-          if(!is.null(progress_callback)) {
-            progress <- 0.5 + (end_idx / total_candidates) * 0.5
-            progress_callback(progress)
+        if(!is.null(progress_callback)) {
+          progress <- 0.5 + (pilot_size / total_candidates) * 0.5
+          progress_callback(progress)
+        }
+
+        if(verbose) message("[DEBUG brute_force] Pilot batch: ", pilot_size, " candidates in ",
+                round(pilot_elapsed, 2), " sec")
+
+        # Calculate adaptive chunk size for remaining candidates
+        remaining <- n_dissim - pilot_size
+        if (remaining > 0) {
+          time_per_candidate <- pilot_elapsed / pilot_size
+          adaptive_chunk_size <- max(
+            min_chunk_for_workers,
+            ceiling(TARGET_CHUNK_SECONDS / max(time_per_candidate, 0.001))
+          )
+
+          current_idx <- pilot_size + 1
+          chunk_num <- 1
+
+          while (current_idx <= n_dissim) {
+            end_idx <- min(current_idx + adaptive_chunk_size - 1, n_dissim)
+            chunk_indices <- current_idx:end_idx
+
+            chunk_results <- furrr::future_map_dbl(
+              top_dissim$nodes_list[chunk_indices],
+              test_single_candidate,
+              .options = furrr::furrr_options(
+                seed = TRUE,
+                globals = list(
+                  test_combined_contribution = test_combined_contribution,
+                  compute_averaged_jaccard = compute_averaged_jaccard,
+                  compute_jaccard_for_contribution = compute_jaccard_for_contribution,
+                  networks_flat_g1 = networks_flat_g1,
+                  networks_flat_g2 = networks_flat_g2,
+                  node_names = node_names,
+                  n_permutations = n_permutations
+                )
+              )
+            )
+
+            all_p_values[chunk_indices] <- chunk_results
+
+            if(!is.null(progress_callback)) {
+              progress <- 0.5 + (end_idx / total_candidates) * 0.5
+              progress_callback(progress)
+            }
+
+            if(verbose) message("[DEBUG brute_force] Dissimilarity chunk ", chunk_num,
+                    " complete (", end_idx, "/", n_dissim, " candidates)")
+
+            current_idx <- end_idx + 1
+            chunk_num <- chunk_num + 1
           }
-
-          if(verbose) message("[DEBUG brute_force] Dissimilarity chunk ", chunk_idx, "/", n_chunks,
-                  " complete (", end_idx, "/", nrow(top_dissim), " candidates)")
         }
 
         all_p_values
@@ -4380,49 +4422,92 @@ brute_force_discovery <- function(analysis_results,
       total_candidates <- nrow(top_dissim) + nrow(top_sim)
       dissim_done <- nrow(top_dissim)
 
-      # Use chunk-based processing for progress updates
-      # CRITICAL: Larger chunks reduce overhead from parallel job startup
-      chunk_size <- max(actual_n_workers * 4, ceiling(nrow(top_sim) / 4))
-      n_chunks <- ceiling(nrow(top_sim) / chunk_size)
+      # ========== TIME-ADAPTIVE CHUNKING FOR R PARALLEL (SIMILARITY) ==========
+      min_chunk_for_workers <- actual_n_workers * 4
+      TARGET_CHUNK_SECONDS <- 2.0
 
       p_values <- tryCatch({
         all_p_values <- numeric(nrow(top_sim))
+        n_sim <- nrow(top_sim)
 
-        for(chunk_idx in 1:n_chunks) {
-          # Calculate chunk indices
-          start_idx <- (chunk_idx - 1) * chunk_size + 1
-          end_idx <- min(chunk_idx * chunk_size, nrow(top_sim))
-          chunk_indices <- start_idx:end_idx
+        # Pilot batch to measure actual speed
+        pilot_size <- min(min_chunk_for_workers, n_sim)
 
-          # Process this chunk in parallel
-          chunk_results <- furrr::future_map_dbl(
-            top_sim$nodes_list[chunk_indices],
-            test_single_candidate,
-            .options = furrr::furrr_options(
-              seed = TRUE,
-              globals = list(
-                test_combined_contribution = test_combined_contribution,
-                compute_averaged_jaccard = compute_averaged_jaccard,
-                compute_jaccard_for_contribution = compute_jaccard_for_contribution,
-                networks_flat_g1 = networks_flat_g1,
-                networks_flat_g2 = networks_flat_g2,
-                node_names = node_names,
-                n_permutations = n_permutations
-              )
+        pilot_start <- Sys.time()
+        pilot_results <- furrr::future_map_dbl(
+          top_sim$nodes_list[1:pilot_size],
+          test_single_candidate,
+          .options = furrr::furrr_options(
+            seed = TRUE,
+            globals = list(
+              test_combined_contribution = test_combined_contribution,
+              compute_averaged_jaccard = compute_averaged_jaccard,
+              compute_jaccard_for_contribution = compute_jaccard_for_contribution,
+              networks_flat_g1 = networks_flat_g1,
+              networks_flat_g2 = networks_flat_g2,
+              node_names = node_names,
+              n_permutations = n_permutations
             )
           )
+        )
+        pilot_elapsed <- as.numeric(difftime(Sys.time(), pilot_start, units = "secs"))
 
-          # Store results
-          all_p_values[chunk_indices] <- chunk_results
+        all_p_values[1:pilot_size] <- pilot_results
 
-          # Update progress (continuing from dissimilarity progress)
-          if(!is.null(progress_callback)) {
-            progress <- 0.5 + ((dissim_done + end_idx) / total_candidates) * 0.5
-            progress_callback(progress)
+        if(!is.null(progress_callback)) {
+          progress <- 0.5 + ((dissim_done + pilot_size) / total_candidates) * 0.5
+          progress_callback(progress)
+        }
+
+        if(verbose) message("[DEBUG brute_force] Similarity pilot: ", pilot_size, " candidates in ",
+                round(pilot_elapsed, 2), " sec")
+
+        # Calculate adaptive chunk size for remaining candidates
+        remaining <- n_sim - pilot_size
+        if (remaining > 0) {
+          time_per_candidate <- pilot_elapsed / pilot_size
+          adaptive_chunk_size <- max(
+            min_chunk_for_workers,
+            ceiling(TARGET_CHUNK_SECONDS / max(time_per_candidate, 0.001))
+          )
+
+          current_idx <- pilot_size + 1
+          chunk_num <- 1
+
+          while (current_idx <= n_sim) {
+            end_idx <- min(current_idx + adaptive_chunk_size - 1, n_sim)
+            chunk_indices <- current_idx:end_idx
+
+            chunk_results <- furrr::future_map_dbl(
+              top_sim$nodes_list[chunk_indices],
+              test_single_candidate,
+              .options = furrr::furrr_options(
+                seed = TRUE,
+                globals = list(
+                  test_combined_contribution = test_combined_contribution,
+                  compute_averaged_jaccard = compute_averaged_jaccard,
+                  compute_jaccard_for_contribution = compute_jaccard_for_contribution,
+                  networks_flat_g1 = networks_flat_g1,
+                  networks_flat_g2 = networks_flat_g2,
+                  node_names = node_names,
+                  n_permutations = n_permutations
+                )
+              )
+            )
+
+            all_p_values[chunk_indices] <- chunk_results
+
+            if(!is.null(progress_callback)) {
+              progress <- 0.5 + ((dissim_done + end_idx) / total_candidates) * 0.5
+              progress_callback(progress)
+            }
+
+            if(verbose) message("[DEBUG brute_force] Similarity chunk ", chunk_num,
+                    " complete (", end_idx, "/", n_sim, " candidates)")
+
+            current_idx <- end_idx + 1
+            chunk_num <- chunk_num + 1
           }
-
-          if(verbose) message("[DEBUG brute_force] Similarity chunk ", chunk_idx, "/", n_chunks,
-                  " complete (", end_idx, "/", nrow(top_sim), " candidates)")
         }
 
         all_p_values

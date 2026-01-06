@@ -426,24 +426,19 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
   }
 
   if (CPP_BACKEND_AVAILABLE && n_candidates >= 1) {
-    # Use C++ batch processing with chunked progress updates
+    # Use C++ batch processing with TIME-ADAPTIVE chunking for progress
     tryCatch({
       # Convert ALL candidates to indices (0-based) upfront
       candidates_indices <- lapply(candidates_list, function(regions) {
         as.integer(which(node_names %in% regions) - 1L)
       })
 
-      # Determine chunk size for progress updates
-      # CRITICAL: Chunk size must be large enough for good thread utilization
-      # With many threads (e.g., 192), small chunks mean most threads are idle
-      # Minimum chunk: n_threads × 2 to ensure all threads get work
-      # Maximum: 4 progress updates (25%, 50%, 75%, 100%) for responsive UI
+      # Minimum chunk for thread utilization: need enough candidates for all threads
       min_chunk_for_threads <- n_threads * 2
-      chunk_size <- max(min_chunk_for_threads, ceiling(n_candidates / 4))  # 4 updates max
 
-      if (n_candidates <= chunk_size || is.null(progress_callback)) {
-        # Small batch or no callback - process all at once
-        if (!is.null(progress_callback)) progress_callback(0.1)  # Show we started
+      # No progress callback or small batch - process all at once (fastest)
+      if (is.null(progress_callback) || n_candidates <= min_chunk_for_threads) {
+        if (!is.null(progress_callback)) progress_callback(0.1)
 
         result <- batch_permutation_test_cpp(
           matrices_g1 = networks_g1,
@@ -465,35 +460,76 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
         ))
       }
 
-      # Process in chunks for progress updates
+      # ========== TIME-ADAPTIVE CHUNKING ==========
+      # Strategy: Run small pilot batch to measure speed, then size chunks for ~2 sec intervals
+      # This gives responsive progress without excessive overhead
+
       all_p_values <- numeric(n_candidates)
       all_observed <- numeric(n_candidates)
       all_ci_lower <- numeric(n_candidates)
       all_ci_upper <- numeric(n_candidates)
-      n_chunks <- ceiling(n_candidates / chunk_size)
 
-      for (chunk_idx in 1:n_chunks) {
-        start_idx <- (chunk_idx - 1) * chunk_size + 1
-        end_idx <- min(chunk_idx * chunk_size, n_candidates)
-        chunk_range <- start_idx:end_idx
+      # Pilot batch: enough candidates to measure reliably (min thread utilization)
+      pilot_size <- min(min_chunk_for_threads, n_candidates)
 
-        # Process this chunk
-        chunk_result <- batch_permutation_test_cpp(
-          matrices_g1 = networks_g1,
-          matrices_g2 = networks_g2,
-          candidates_list = candidates_indices[chunk_range],
-          n_permutations = as.integer(n_permutations),
-          n_threads = as.integer(n_threads),
-          seed = 42L + chunk_idx  # Different seed per chunk for variety
+      progress_callback(0.05)  # Show we started
+
+      pilot_start <- Sys.time()
+      pilot_result <- batch_permutation_test_cpp(
+        matrices_g1 = networks_g1,
+        matrices_g2 = networks_g2,
+        candidates_list = candidates_indices[1:pilot_size],
+        n_permutations = as.integer(n_permutations),
+        n_threads = as.integer(n_threads),
+        seed = 42L
+      )
+      pilot_elapsed <- as.numeric(difftime(Sys.time(), pilot_start, units = "secs"))
+
+      all_p_values[1:pilot_size] <- pilot_result$p_values
+      all_observed[1:pilot_size] <- pilot_result$observed_values
+      all_ci_lower[1:pilot_size] <- pilot_result$ci_lower
+      all_ci_upper[1:pilot_size] <- pilot_result$ci_upper
+
+      progress_callback(pilot_size / n_candidates)
+
+      # Calculate time per candidate from pilot
+      time_per_candidate <- pilot_elapsed / pilot_size
+
+      # Size remaining chunks for TARGET_CHUNK_SECONDS (responsive but efficient)
+      TARGET_CHUNK_SECONDS <- 2.0
+      remaining <- n_candidates - pilot_size
+
+      if (remaining > 0) {
+        # Calculate chunk size for ~2 second intervals
+        # Ensure minimum thread utilization
+        adaptive_chunk_size <- max(
+          min_chunk_for_threads,
+          ceiling(TARGET_CHUNK_SECONDS / max(time_per_candidate, 0.001))
         )
 
-        all_p_values[chunk_range] <- chunk_result$p_values
-        all_observed[chunk_range] <- chunk_result$observed_values
-        all_ci_lower[chunk_range] <- chunk_result$ci_lower
-        all_ci_upper[chunk_range] <- chunk_result$ci_upper
+        current_idx <- pilot_size + 1
 
-        # Report progress
-        progress_callback(end_idx / n_candidates)
+        while (current_idx <= n_candidates) {
+          end_idx <- min(current_idx + adaptive_chunk_size - 1, n_candidates)
+          chunk_range <- current_idx:end_idx
+
+          chunk_result <- batch_permutation_test_cpp(
+            matrices_g1 = networks_g1,
+            matrices_g2 = networks_g2,
+            candidates_list = candidates_indices[chunk_range],
+            n_permutations = as.integer(n_permutations),
+            n_threads = as.integer(n_threads),
+            seed = 42L + current_idx
+          )
+
+          all_p_values[chunk_range] <- chunk_result$p_values
+          all_observed[chunk_range] <- chunk_result$observed_values
+          all_ci_lower[chunk_range] <- chunk_result$ci_lower
+          all_ci_upper[chunk_range] <- chunk_result$ci_upper
+
+          progress_callback(end_idx / n_candidates)
+          current_idx <- end_idx + 1
+        }
       }
 
       return(data.frame(
