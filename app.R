@@ -1157,7 +1157,7 @@ create_summary_ui <- function() {
                                         "Comparison (Edge Differences)" = "dual",
                                         "Split Circles (Sim vs Dissim)" = "split"),
                               selected = "single"),
-                  checkboxInput("contrib_viz_sig_only", "Significant combinations only (p < 0.05)", TRUE),
+                  checkboxInput("contrib_viz_sig_only", "Significant combinations only (q < 0.05)", TRUE),
                   checkboxInput("contrib_viz_synergistic", "Synergistic combinations only", FALSE),
                   conditionalPanel(
                     condition = "input.contrib_viz_type == 'split'",
