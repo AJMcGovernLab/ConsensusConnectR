@@ -1154,15 +1154,23 @@ create_summary_ui <- function() {
                 column(4,
                   selectInput("contrib_viz_type", "Visualization Type:",
                               choices = c("Single Network (Colored Nodes)" = "single",
-                                        "Comparison (Edge Differences)" = "dual"),
+                                        "Comparison (Edge Differences)" = "dual",
+                                        "Split Circles (Sim vs Dissim)" = "split"),
                               selected = "single"),
                   checkboxInput("contrib_viz_sig_only", "Significant combinations only (p < 0.05)", TRUE),
                   checkboxInput("contrib_viz_synergistic", "Synergistic combinations only", FALSE),
-                  selectInput("contrib_viz_layout", "Network Layout:",
-                              choices = c("Force-Directed" = "fr",
-                                        "Circular" = "circle",
-                                        "Kamada-Kawai" = "kk"),
-                              selected = "fr")
+                  conditionalPanel(
+                    condition = "input.contrib_viz_type == 'split'",
+                    checkboxInput("contrib_viz_show_inter", "Show inter-group edges", TRUE)
+                  ),
+                  conditionalPanel(
+                    condition = "input.contrib_viz_type != 'split'",
+                    selectInput("contrib_viz_layout", "Network Layout:",
+                                choices = c("Force-Directed" = "fr",
+                                          "Circular" = "circle",
+                                          "Kamada-Kawai" = "kk"),
+                                selected = "fr")
+                  )
                 ),
                 column(8,
                   downloadablePlotOutput("contributionNetworkPlot", height = "500px")
@@ -11578,6 +11586,27 @@ server <- function(input, output, session) {
         node_summary = node_summary,
         brain_areas = ui_state$brain_areas,
         layout = layout_type
+      )
+    } else if(viz_type == "split") {
+      # Split circle view: similarity regions vs dissimilarity regions
+      # Get average threshold
+      avg_thresh <- NULL
+      if(!is.null(analysis_results$group_thresholds)) {
+        thresholds <- unlist(analysis_results$group_thresholds)
+        if(length(thresholds) > 0) {
+          avg_thresh <- mean(thresholds, na.rm = TRUE)
+        }
+      }
+
+      plot_contribution_network_split(
+        avg_cor = results$avg_cor,
+        node_summary = node_summary,
+        brain_areas = ui_state$brain_areas,
+        area_colors = ui_state$area_colors,
+        threshold = avg_thresh,
+        show_inter_edges = input$contrib_viz_show_inter %||% TRUE,
+        group1_name = results$group1_name,
+        group2_name = results$group2_name
       )
     } else {
       # Dual view: show Group 1 vs Group 2 networks

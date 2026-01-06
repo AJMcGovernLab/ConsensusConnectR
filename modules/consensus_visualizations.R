@@ -1689,3 +1689,282 @@ plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
   mtext(paste(thresh_info, "| Only regions from significant combinations"),
         side = 1, outer = TRUE, line = 0.5, cex = 0.7, col = "gray40")
 }
+
+
+#' Plot Split Circle Network (Similarity vs Dissimilarity Regions)
+#'
+#' Creates a visualization with two circular arrangements:
+#' - Left circle: regions primarily in similarity combinations
+#' - Right circle: regions primarily in dissimilarity combinations
+#' Edges within circles are solid, edges between circles are dashed (optional).
+#'
+#' @param avg_cor Average correlation matrix
+#' @param node_summary Data frame from compute_node_contribution_summary()
+#' @param brain_areas List mapping area names to region vectors
+#' @param area_colors Named vector of colors for each brain area
+#' @param threshold Correlation threshold for edges (NULL = use median)
+#' @param show_inter_edges Whether to show edges between the two circles
+#' @param group1_name Name for similarity group label
+#' @param group2_name Name for dissimilarity group label
+plot_contribution_network_split <- function(avg_cor, node_summary,
+                                            brain_areas = NULL, area_colors = NULL,
+                                            threshold = NULL,
+                                            show_inter_edges = TRUE,
+                                            group1_name = "Group 1",
+                                            group2_name = "Group 2") {
+
+  if(!requireNamespace("igraph", quietly = TRUE)) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "igraph package required", cex = 1.2, col = "red")
+    return()
+  }
+
+  if(is.null(avg_cor)) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Correlation matrix not available", cex = 1.2, col = "gray50")
+    return()
+  }
+
+  if(is.null(node_summary) || nrow(node_summary) == 0) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "No contribution data available\n(run brute force analysis first)", cex = 1.1, col = "gray50")
+    return()
+  }
+
+  # Classify nodes by contribution direction
+  # direction_ratio < 0 = similarity driver, > 0 = dissimilarity driver
+  sim_nodes <- node_summary$node[node_summary$direction_ratio < 0]
+  dissim_nodes <- node_summary$node[node_summary$direction_ratio > 0]
+  # Balanced nodes (ratio = 0) go to the smaller group for balance
+  balanced_nodes <- node_summary$node[node_summary$direction_ratio == 0]
+  if(length(balanced_nodes) > 0) {
+    if(length(sim_nodes) <= length(dissim_nodes)) {
+      sim_nodes <- c(sim_nodes, balanced_nodes)
+    } else {
+      dissim_nodes <- c(dissim_nodes, balanced_nodes)
+    }
+  }
+
+  if(length(sim_nodes) == 0 && length(dissim_nodes) == 0) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "No nodes to display", cex = 1.1, col = "gray50")
+    return()
+  }
+
+  # Get all significant nodes
+  all_sig_nodes <- c(sim_nodes, dissim_nodes)
+  all_nodes <- rownames(avg_cor)
+  if(is.null(all_nodes)) all_nodes <- colnames(avg_cor)
+
+  sig_indices <- which(all_nodes %in% all_sig_nodes)
+  if(length(sig_indices) < 2) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Need at least 2 significant regions", cex = 1.0, col = "gray50")
+    return()
+  }
+
+  # Subset correlation matrix
+  sub_cor <- avg_cor[sig_indices, sig_indices, drop = FALSE]
+  node_names <- rownames(sub_cor)
+
+  # Work with absolute correlations
+  abs_cor <- abs(sub_cor)
+  diag(abs_cor) <- 0
+
+  # Determine threshold
+  nz_vals <- abs_cor[abs_cor > 0]
+  thresh <- if(!is.null(threshold)) {
+    threshold
+  } else if(length(nz_vals) > 0) {
+    quantile(nz_vals, 0.5, na.rm = TRUE)
+  } else {
+    0
+  }
+
+  # Binary adjacency
+  binary_adj <- (abs_cor >= thresh) * 1
+
+  # Create region -> area mapping for colors
+  region_to_area <- character()
+  if(!is.null(brain_areas) && length(brain_areas) > 0 && is.list(brain_areas)) {
+    for(area_name in names(brain_areas)) {
+      regions_in_area <- brain_areas[[area_name]]
+      if(length(regions_in_area) > 0) {
+        for(reg in regions_in_area) {
+          region_to_area[reg] <- area_name
+        }
+      }
+    }
+  }
+
+  # Assign colors to nodes
+  get_node_color <- function(node_name) {
+    if(length(region_to_area) > 0 && node_name %in% names(region_to_area)) {
+      area <- region_to_area[node_name]
+      if(!is.null(area_colors) && area %in% names(area_colors)) {
+        return(area_colors[[area]])
+      }
+    }
+    return("#808080")  # Default gray
+  }
+
+  # Create circular layouts for each group
+  n_sim <- length(sim_nodes)
+  n_dissim <- length(dissim_nodes)
+
+  # Position nodes: left circle for similarity, right circle for dissimilarity
+  # Circle centers
+  left_center <- c(-1.5, 0)
+  right_center <- c(1.5, 0)
+  radius <- 1.0
+
+  # Generate coordinates
+  coords <- matrix(0, nrow = length(node_names), ncol = 2)
+  rownames(coords) <- node_names
+
+  # Left circle (similarity nodes)
+  if(n_sim > 0) {
+    angles_sim <- seq(0, 2*pi, length.out = n_sim + 1)[1:n_sim]
+    for(i in seq_along(sim_nodes)) {
+      if(sim_nodes[i] %in% node_names) {
+        idx <- which(node_names == sim_nodes[i])
+        coords[idx, 1] <- left_center[1] + radius * cos(angles_sim[i])
+        coords[idx, 2] <- left_center[2] + radius * sin(angles_sim[i])
+      }
+    }
+  }
+
+  # Right circle (dissimilarity nodes)
+  if(n_dissim > 0) {
+    angles_dissim <- seq(0, 2*pi, length.out = n_dissim + 1)[1:n_dissim]
+    for(i in seq_along(dissim_nodes)) {
+      if(dissim_nodes[i] %in% node_names) {
+        idx <- which(node_names == dissim_nodes[i])
+        coords[idx, 1] <- right_center[1] + radius * cos(angles_dissim[i])
+        coords[idx, 2] <- right_center[2] + radius * sin(angles_dissim[i])
+      }
+    }
+  }
+
+  # Prepare plot
+  old_par <- par(no.readonly = TRUE)
+  on.exit(par(old_par))
+
+  par(mar = c(4, 1, 3, 1))
+
+  # Set up plot area
+  xlim <- c(-3.2, 3.2)
+  ylim <- c(-2, 2.5)
+  plot(NULL, xlim = xlim, ylim = ylim, asp = 1,
+       xlab = "", ylab = "", axes = FALSE,
+       main = "Contribution Network: Similarity vs Dissimilarity Regions")
+
+  # Draw edges
+  for(i in 1:(length(node_names)-1)) {
+    for(j in (i+1):length(node_names)) {
+      if(binary_adj[i, j] == 1) {
+        n1 <- node_names[i]
+        n2 <- node_names[j]
+
+        # Determine edge type
+        n1_is_sim <- n1 %in% sim_nodes
+        n2_is_sim <- n2 %in% sim_nodes
+
+        # Edge width based on correlation
+        edge_width <- 1 + abs_cor[i, j] * 3
+
+        if(n1_is_sim && n2_is_sim) {
+          # Both in similarity circle - dark blue solid
+          segments(coords[i, 1], coords[i, 2], coords[j, 1], coords[j, 2],
+                   col = "#2980B9", lwd = edge_width)
+        } else if(!n1_is_sim && !n2_is_sim) {
+          # Both in dissimilarity circle - dark red solid
+          segments(coords[i, 1], coords[i, 2], coords[j, 1], coords[j, 2],
+                   col = "#C0392B", lwd = edge_width)
+        } else if(show_inter_edges) {
+          # Inter-circle edge - lighter dashed
+          # Use lighter color based on which node drives the connection
+          if(n1_is_sim) {
+            edge_color <- adjustcolor("#5DADE2", alpha.f = 0.6)  # Light blue
+          } else {
+            edge_color <- adjustcolor("#E74C3C", alpha.f = 0.6)  # Light red
+          }
+          segments(coords[i, 1], coords[i, 2], coords[j, 1], coords[j, 2],
+                   col = edge_color, lwd = edge_width * 0.7, lty = 2)
+        }
+      }
+    }
+  }
+
+  # Draw nodes
+  node_colors <- sapply(node_names, get_node_color)
+  points(coords[, 1], coords[, 2], pch = 21, cex = 3,
+         bg = node_colors, col = "gray30", lwd = 1.5)
+
+  # Add node labels
+  text(coords[, 1], coords[, 2], labels = node_names, cex = 0.55, font = 2)
+
+  # Add circle labels
+  text(left_center[1], left_center[2] + radius + 0.4,
+       paste0("Similarity Drivers\n(n=", n_sim, ")"),
+       cex = 0.9, font = 2, col = "#2980B9")
+  text(right_center[1], right_center[2] + radius + 0.4,
+       paste0("Dissimilarity Drivers\n(n=", n_dissim, ")"),
+       cex = 0.9, font = 2, col = "#C0392B")
+
+  # Add legend
+  legend_items <- c("Intra-similarity edges", "Intra-dissimilarity edges")
+  legend_cols <- c("#2980B9", "#C0392B")
+  legend_lty <- c(1, 1)
+  legend_lwd <- c(2, 2)
+
+  if(show_inter_edges) {
+    legend_items <- c(legend_items, "Inter-group edges")
+    legend_cols <- c(legend_cols, "gray50")
+    legend_lty <- c(legend_lty, 2)
+    legend_lwd <- c(legend_lwd, 1.5)
+  }
+
+  legend("bottom",
+         legend = legend_items,
+         col = legend_cols,
+         lty = legend_lty,
+         lwd = legend_lwd,
+         cex = 0.75,
+         horiz = TRUE,
+         bty = "n")
+
+  # Add brain area legend if available
+  if(!is.null(area_colors) && length(area_colors) > 0) {
+    present_areas <- unique(sapply(node_names, function(n) {
+      if(n %in% names(region_to_area)) region_to_area[n] else "Other"
+    }))
+    present_areas <- present_areas[present_areas %in% names(area_colors)]
+
+    if(length(present_areas) > 0) {
+      legend("topleft",
+             legend = present_areas,
+             fill = area_colors[present_areas],
+             title = "Brain Area",
+             cex = 0.7,
+             bty = "n")
+    }
+  }
+
+  # Subtitle with stats
+  n_sim_edges <- sum(sapply(1:(length(node_names)-1), function(i) {
+    sum(sapply((i+1):length(node_names), function(j) {
+      if(binary_adj[i, j] == 1 && node_names[i] %in% sim_nodes && node_names[j] %in% sim_nodes) 1 else 0
+    }))
+  }))
+  n_dissim_edges <- sum(sapply(1:(length(node_names)-1), function(i) {
+    sum(sapply((i+1):length(node_names), function(j) {
+      if(binary_adj[i, j] == 1 && !node_names[i] %in% sim_nodes && !node_names[j] %in% sim_nodes) 1 else 0
+    }))
+  }))
+  n_inter_edges <- sum(binary_adj[upper.tri(binary_adj)]) - n_sim_edges - n_dissim_edges
+
+  mtext(sprintf("Edges: %d similarity, %d dissimilarity, %d inter-group | Threshold: %.3f",
+                n_sim_edges, n_dissim_edges, n_inter_edges, thresh),
+        side = 1, line = 2, cex = 0.75, col = "gray40")
+}
