@@ -234,12 +234,20 @@ estimate_permutation_runtime <- function(n_tests,
     # Total batch time = max candidates per thread × time per candidate
     batch_compute_ms <- candidates_per_thread * time_per_candidate_ms
 
-    # Small overhead per batch call (~10 batches for progress updates)
+    # Overhead per batch call (progress updates, R-C++ data transfer, memory allocation)
+    # Increased from 10ms to 50ms based on real-world measurements
     n_batches <- ceiling(n_tests / max(1, ceiling(n_tests / 10)))
-    batch_overhead_ms <- n_batches * 10  # ~10ms overhead per C++ call
+    batch_overhead_ms <- n_batches * 50  # ~50ms overhead per C++ batch call
 
-    perm_time_ms <- batch_compute_ms + batch_overhead_ms
-    time_ms <- enum_time_ms + perm_time_ms  # Include enumeration (Phase 1)
+    # Add progress reporting overhead (~100ms per 1000 candidates)
+    progress_overhead_ms <- (n_tests / 1000) * 100
+
+    perm_time_ms <- batch_compute_ms + batch_overhead_ms + progress_overhead_ms
+
+    # Apply safety factor (15%) to account for variance, cache effects, memory pressure
+    # Calibration uses small samples that may benefit from cache locality
+    SAFETY_FACTOR <- 1.15
+    time_ms <- (enum_time_ms + perm_time_ms) * SAFETY_FACTOR
     serial_compute_ms <- total_ops * serial_perm_time_ms  # True serial time
     parallel_beneficial <- TRUE  # C++ is always beneficial
     overhead_breakdown <- list(
@@ -247,10 +255,12 @@ estimate_permutation_runtime <- function(n_tests,
       spawn_ms = 0,
       serialization_ms = 0,
       batch_overhead_ms = batch_overhead_ms,
+      progress_overhead_ms = progress_overhead_ms,
       compute_ms = batch_compute_ms,
       candidates_per_thread = candidates_per_thread,
       n_threads = n_threads,
-      serial_perm_time_ms = serial_perm_time_ms
+      serial_perm_time_ms = serial_perm_time_ms,
+      safety_factor = SAFETY_FACTOR
     )
 
   } else if (n_workers > 1) {
@@ -274,7 +284,10 @@ estimate_permutation_runtime <- function(n_tests,
 
     # Total time with overhead + enumeration (Phase 1 runs serially before parallel phase)
     perm_time_ms <- spawn_overhead_ms + parallel_compute_ms + serialization_ms
-    time_ms <- enum_time_ms + perm_time_ms
+
+    # Apply safety factor (15%) to account for variance and overhead not captured
+    SAFETY_FACTOR <- 1.15
+    time_ms <- (enum_time_ms + perm_time_ms) * SAFETY_FACTOR
 
     # Check if parallel is beneficial (compare perm phase only)
     parallel_beneficial <- perm_time_ms < serial_compute_ms
@@ -282,18 +295,24 @@ estimate_permutation_runtime <- function(n_tests,
       enum_ms = enum_time_ms,
       spawn_ms = spawn_overhead_ms,
       serialization_ms = serialization_ms,
-      compute_ms = parallel_compute_ms
+      compute_ms = parallel_compute_ms,
+      safety_factor = SAFETY_FACTOR
     )
   } else {
     # Serial R execution
     serial_compute_ms <- total_ops * time_per_perm_ms
-    time_ms <- enum_time_ms + serial_compute_ms  # Include enumeration
+
+    # Apply safety factor (15%) to account for variance and overhead not captured
+    SAFETY_FACTOR <- 1.15
+    time_ms <- (enum_time_ms + serial_compute_ms) * SAFETY_FACTOR
+
     parallel_beneficial <- FALSE
     overhead_breakdown <- list(
       enum_ms = enum_time_ms,
       spawn_ms = 0,
       serialization_ms = 0,
-      compute_ms = serial_compute_ms
+      compute_ms = serial_compute_ms,
+      safety_factor = SAFETY_FACTOR
     )
   }
 
@@ -469,13 +488,12 @@ calibrate_parallel_performance <- function(analysis_results,
   if (cpp_available && exists("test_combined_contribution_fast", mode = "function")) {
     if (verbose) message("Using C++ backend for calibration...")
 
-    # Pick a random region to test with
-    test_region <- sample(node_names, 1)
+    # ========== TEST MULTIPLE REGION SIZES FOR ACCURATE SCALING ==========
+    # Actual brute force tests combinations of 1, 2, 3+ regions
+    # Single-region calibration underestimates multi-region complexity
 
     # CRITICAL FIX: Ensure enough permutations for accurate measurement
     # With many threads (e.g., 192), small n_calibration_perms measures overhead, not computation
-    # Minimum: n_threads * 10 permutations so each thread gets meaningful work
-    # For batch mode (which parallelizes CANDIDATES), we also measure serial time
     effective_calibration_perms <- max(n_calibration_perms, cpp_threads * 10, 500)
 
     if (verbose && effective_calibration_perms > n_calibration_perms) {
@@ -483,70 +501,102 @@ calibrate_parallel_performance <- function(analysis_results,
               effective_calibration_perms, " for ", cpp_threads, " threads")
     }
 
-    # Time C++ execution with enough permutations
-    start_cpp <- Sys.time()
+    # Test with different combination sizes (1, 2, 3 regions)
+    # This captures the scaling behavior for multi-region combinations
+    perm_times_by_size <- list()
+    serial_times_by_size <- list()
+
+    for (combo_size in 1:min(3, n_nodes - 1)) {
+      test_regions <- sample(node_names, combo_size)
+
+      # Time C++ parallel execution
+      start_cpp <- Sys.time()
+      cpp_result <- tryCatch({
+        test_combined_contribution_fast(
+          networks_g1 = networks_g1,
+          networks_g2 = networks_g2,
+          node_names = node_names,
+          selected_regions = test_regions,
+          n_permutations = effective_calibration_perms,
+          n_threads = 0,  # Auto-detect
+          seed = 42 + combo_size
+        )
+      }, error = function(e) NULL)
+
+      if (!is.null(cpp_result)) {
+        cpp_elapsed_ms <- as.numeric(difftime(Sys.time(), start_cpp, units = "secs")) * 1000
+        perm_times_by_size[[as.character(combo_size)]] <- cpp_elapsed_ms / effective_calibration_perms
+
+        # Also measure serial time for this combination size
+        n_serial_test_perms <- 200  # Increased from 100 for better accuracy
+        start_serial <- Sys.time()
+        serial_result <- test_combined_contribution_fast(
+          networks_g1 = networks_g1,
+          networks_g2 = networks_g2,
+          node_names = node_names,
+          selected_regions = test_regions,
+          n_permutations = n_serial_test_perms,
+          n_threads = 1,  # Force single thread
+          seed = 43 + combo_size
+        )
+        serial_elapsed_ms <- as.numeric(difftime(Sys.time(), start_serial, units = "secs")) * 1000
+        serial_times_by_size[[as.character(combo_size)]] <- serial_elapsed_ms / n_serial_test_perms
+
+        if (verbose) {
+          message("  Size ", combo_size, " regions: parallel=",
+                  round(perm_times_by_size[[as.character(combo_size)]], 4), " ms, serial=",
+                  round(serial_times_by_size[[as.character(combo_size)]], 4), " ms per perm")
+        }
+      }
+    }
+
+    # Use weighted average favoring larger combinations (more common in actual runs)
+    # Weights: size 1 = 1, size 2 = 2, size 3 = 3
+    weights <- as.numeric(names(perm_times_by_size))
+    parallel_times <- unlist(perm_times_by_size)
+    serial_times <- unlist(serial_times_by_size)
+
+    cpp_time_per_perm <- if (length(parallel_times) > 0) {
+      sum(parallel_times * weights) / sum(weights)
+    } else {
+      0.01  # Fallback
+    }
+
+    cpp_serial_time_per_perm <- if (length(serial_times) > 0) {
+      sum(serial_times * weights) / sum(weights)
+    } else {
+      cpp_time_per_perm * cpp_threads * 0.85
+    }
+
     tryCatch({
-      cpp_result <- test_combined_contribution_fast(
-        networks_g1 = networks_g1,
-        networks_g2 = networks_g2,
-        node_names = node_names,
-        selected_regions = test_region,
-        n_permutations = effective_calibration_perms,
-        n_threads = 0,  # Auto-detect
-        seed = 42
-      )
-      cpp_elapsed_ms <- as.numeric(difftime(Sys.time(), start_cpp, units = "secs")) * 1000
-      cpp_time_per_perm <- cpp_elapsed_ms / effective_calibration_perms
-
-      # CRITICAL: Directly measure SERIAL C++ time for batch mode estimation
-      # Batch mode parallelizes CANDIDATES, not permutations
-      # So within each candidate, permutations run serially on one thread
-      # We measure this directly by running with n_threads=1
-      n_serial_test_perms <- 100  # Enough to get reliable timing
-      start_serial <- Sys.time()
-      serial_result <- test_combined_contribution_fast(
-        networks_g1 = networks_g1,
-        networks_g2 = networks_g2,
-        node_names = node_names,
-        selected_regions = test_region,
-        n_permutations = n_serial_test_perms,
-        n_threads = 1,  # Force single thread to measure serial time
-        seed = 43
-      )
-      serial_elapsed_ms <- as.numeric(difftime(Sys.time(), start_serial, units = "secs")) * 1000
-      cpp_serial_time_per_perm <- serial_elapsed_ms / n_serial_test_perms
-
-      # Also measure R serial for comparison
+      # Measure R serial for comparison (single region only for speed)
+      test_region <- sample(node_names, 1)
       start_r <- Sys.time()
-      for (i in 1:min(10, n_serial_test_perms)) {
+      for (i in 1:20) {  # Increased from 10
         perm_idx <- sample(n_nodes)
         permuted_g1 <- lapply(networks_g1, function(m) m[perm_idx, perm_idx])
         permuted_g2 <- lapply(networks_g2, function(m) m[perm_idx, perm_idx])
         compute_averaged_jaccard(permuted_g1, permuted_g2, exclude_nodes = NULL)
       }
       r_elapsed_ms <- as.numeric(difftime(Sys.time(), start_r, units = "secs")) * 1000
-      r_time_per_perm <- r_elapsed_ms / min(10, n_serial_test_perms)
+      r_time_per_perm <- r_elapsed_ms / 20
 
       # Calculate speedups
-      cpp_speedup <- r_time_per_perm / cpp_time_per_perm  # Parallel speedup vs R
-      serial_speedup <- r_time_per_perm / cpp_serial_time_per_perm  # Serial C++ speedup vs R
+      cpp_speedup <- r_time_per_perm / cpp_time_per_perm
+      serial_speedup <- r_time_per_perm / cpp_serial_time_per_perm
 
       if (verbose) {
-        message("  C++ parallel time per perm: ", round(cpp_time_per_perm, 4), " ms (with ", cpp_threads, " threads)")
-        message("  C++ serial time per perm: ", round(cpp_serial_time_per_perm, 4), " ms (for batch mode)")
+        message("  Weighted avg C++ parallel time: ", round(cpp_time_per_perm, 4), " ms")
+        message("  Weighted avg C++ serial time: ", round(cpp_serial_time_per_perm, 4), " ms")
         message("  R serial time per perm: ", round(r_time_per_perm, 2), " ms")
         message("  C++ parallel speedup: ", round(cpp_speedup, 1), "x vs R serial")
-        message("  C++ serial speedup: ", round(serial_speedup, 1), "x vs R serial")
         message("  OpenMP threads: ", cpp_threads)
-        message("  Calibration perms: ", effective_calibration_perms, " parallel + ", n_serial_test_perms, " serial")
       }
 
       # ========== MEASURE ENUMERATION TIME (Phase 1 of brute force) ==========
-      # This measures time to compute Jaccard for one combination WITHOUT permutations
-      # Brute force Phase 1 does this for ALL combinations before any permutation testing
-      if (verbose) message("  Measuring enumeration time (Jaccard computation per combination)...")
+      # Test with multiple combination sizes for accurate scaling
+      if (verbose) message("  Measuring enumeration time (multiple combination sizes)...")
 
-      # Extract networks by approach (same structure as brute_force_discovery uses)
       networks_by_approach_g1 <- tryCatch(
         extract_networks_by_approach(group1, analysis_results, methods),
         error = function(e) NULL
@@ -558,24 +608,33 @@ calibrate_parallel_performance <- function(analysis_results,
 
       enum_time_per_combo_ms <- NA
       if (!is.null(networks_by_approach_g1) && !is.null(networks_by_approach_g2)) {
-        # Time computation for a few test combinations
-        n_enum_tests <- min(20, n_nodes)
-        test_regions <- sample(node_names, n_enum_tests)
+        # Test multiple combination sizes (1, 2, 3 regions)
+        enum_times <- c()
+        enum_weights <- c()
 
-        start_enum <- Sys.time()
-        for (test_region in test_regions) {
-          # Compute Jaccard for each approach (same as Phase 1)
-          compute_approach_jaccard(networks_by_approach_g1$weighted, networks_by_approach_g2$weighted,
-                                   exclude_nodes = test_region)
-          compute_approach_jaccard(networks_by_approach_g1$percolation, networks_by_approach_g2$percolation,
-                                   exclude_nodes = test_region)
-          compute_persistence_jaccard(networks_by_approach_g1$persistence, networks_by_approach_g2$persistence,
-                                      exclude_nodes = test_region)
+        for (combo_size in 1:min(3, n_nodes - 1)) {
+          n_enum_tests <- min(50, choose(n_nodes, combo_size))  # Increased from 20
+
+          start_enum <- Sys.time()
+          for (i in 1:n_enum_tests) {
+            test_regions <- sample(node_names, combo_size)
+            compute_approach_jaccard(networks_by_approach_g1$weighted, networks_by_approach_g2$weighted,
+                                     exclude_nodes = test_regions)
+            compute_approach_jaccard(networks_by_approach_g1$percolation, networks_by_approach_g2$percolation,
+                                     exclude_nodes = test_regions)
+            compute_persistence_jaccard(networks_by_approach_g1$persistence, networks_by_approach_g2$persistence,
+                                        exclude_nodes = test_regions)
+          }
+          enum_elapsed_ms <- as.numeric(difftime(Sys.time(), start_enum, units = "secs")) * 1000
+          enum_times <- c(enum_times, enum_elapsed_ms / n_enum_tests)
+          enum_weights <- c(enum_weights, combo_size)
+
+          if (verbose) message("    Size ", combo_size, ": ", round(enum_elapsed_ms / n_enum_tests, 3), " ms/combo")
         }
-        enum_elapsed_ms <- as.numeric(difftime(Sys.time(), start_enum, units = "secs")) * 1000
-        enum_time_per_combo_ms <- enum_elapsed_ms / n_enum_tests
 
-        if (verbose) message("  Enumeration time per combination: ", round(enum_time_per_combo_ms, 2), " ms")
+        # Weighted average favoring larger combinations
+        enum_time_per_combo_ms <- sum(enum_times * enum_weights) / sum(enum_weights)
+        if (verbose) message("  Weighted avg enumeration time: ", round(enum_time_per_combo_ms, 3), " ms/combo")
       }
 
       recommendation <- sprintf("C++ backend with %d OpenMP threads (%.0fx faster than R)",
@@ -583,14 +642,16 @@ calibrate_parallel_performance <- function(analysis_results,
 
       return(list(
         time_per_perm_ms = cpp_time_per_perm,
-        # NEW: Serial time per perm for batch mode estimation
+        # Serial time per perm for batch mode estimation
         # Batch mode parallelizes CANDIDATES, so permutations within each candidate run serially
         cpp_serial_time_per_perm_ms = cpp_serial_time_per_perm,
         r_time_per_perm_ms = r_time_per_perm,
-        serial_time_ms = cpp_elapsed_ms,
+        # Timing breakdown by combination size (for detailed analysis)
+        perm_times_by_size = perm_times_by_size,
+        serial_times_by_size = serial_times_by_size,
         n_nodes = n_nodes,
         n_matrices = n_matrices,
-        n_calibration_perms = effective_calibration_perms,  # Use actual perms run
+        n_calibration_perms = effective_calibration_perms,
         backend = "cpp_openmp",
         cpp_threads = cpp_threads,
         cpp_speedup = cpp_speedup,
@@ -599,7 +660,7 @@ calibrate_parallel_performance <- function(analysis_results,
         use_parallel = TRUE,
         recommendation = recommendation,
         calibration_timestamp = Sys.time(),
-        # Enumeration time for Phase 1 estimation
+        # Enumeration time for Phase 1 estimation (weighted avg across combination sizes)
         enum_time_per_combo_ms = enum_time_per_combo_ms
       ))
 
