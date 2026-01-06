@@ -1192,7 +1192,16 @@ create_summary_ui <- function() {
             hr(),
 
             h5("Summary Statistics"),
-            verbatimTextOutput("regionalContributionSummary")
+            verbatimTextOutput("regionalContributionSummary"),
+
+            hr(),
+
+            h5("Download Results"),
+            tags$p("Download all plots, data tables, and summary from this analysis as a ZIP file.",
+                   style = "font-size: 0.9em; color: #666;"),
+            downloadButton("download_artificial_discovery_results",
+                          "Download All Results",
+                          class = "btn-success")
           ),
 
           tabPanel("Methods",
@@ -12134,6 +12143,301 @@ server <- function(input, output, session) {
     }
   })
 
+  # Download handler for Artificial Brain Area Discovery results
+ output$download_artificial_discovery_results <- downloadHandler(
+    filename = function() {
+      paste0("ArtificialBrainAreaDiscovery_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".zip")
+    },
+    content = function(file) {
+      results <- regional_contribution_results()
+
+      if(is.null(results) || is.null(results$mode) || results$mode != "artificial") {
+        showNotification("No artificial brain area discovery results available. Run the analysis first.",
+                        type = "error", duration = 5)
+        return()
+      }
+
+      # Create temporary directory
+      temp_base <- tempfile(pattern = "ArtificialDiscovery_")
+      dir.create(temp_base, recursive = TRUE, showWarnings = FALSE)
+
+      tryCatch({
+        discovery <- results$discovery
+
+        # ==========================================
+        # 1. SAVE BAR PLOT (Part 4)
+        # ==========================================
+        if(!is.null(discovery$top_dissimilarity) || !is.null(discovery$top_similarity)) {
+          plot_file <- file.path(temp_base, "01_SignificantCombinations_BarPlot.png")
+          png(plot_file, width = 12, height = 10, units = "in", res = 300)
+
+          # Replicate the bar plot logic from artificialCombinationsSummaryPlot
+          top_dissim <- discovery$top_dissimilarity
+          top_sim <- discovery$top_similarity
+          sig_nonredundant <- data.frame()
+
+          if(!is.null(top_dissim) && nrow(top_dissim) > 0) {
+            if("p_adjusted" %in% names(top_dissim)) {
+              sig_d <- top_dissim[!is.na(top_dissim$p_adjusted) & top_dissim$p_adjusted < 0.05, ]
+            } else if("significant" %in% names(top_dissim)) {
+              sig_d <- top_dissim[!is.na(top_dissim$significant) & top_dissim$significant == TRUE, ]
+            } else {
+              sig_d <- data.frame()
+            }
+            if(nrow(sig_d) > 0) {
+              if("synergy" %in% names(sig_d)) {
+                is_single <- sig_d$size == 1
+                is_synergistic <- !is.na(sig_d$synergy) & sig_d$synergy >= 0
+                sig_d <- sig_d[is_single | is_synergistic, ]
+              }
+              if(nrow(sig_d) > 0) {
+                sig_d$direction <- "Dissimilarity"
+                sig_nonredundant <- rbind(sig_nonredundant, sig_d)
+              }
+            }
+          }
+
+          if(!is.null(top_sim) && nrow(top_sim) > 0) {
+            if("p_adjusted" %in% names(top_sim)) {
+              sig_s <- top_sim[!is.na(top_sim$p_adjusted) & top_sim$p_adjusted < 0.05, ]
+            } else if("significant" %in% names(top_sim)) {
+              sig_s <- top_sim[!is.na(top_sim$significant) & top_sim$significant == TRUE, ]
+            } else {
+              sig_s <- data.frame()
+            }
+            if(nrow(sig_s) > 0) {
+              if("synergy" %in% names(sig_s)) {
+                is_single <- sig_s$size == 1
+                is_synergistic <- !is.na(sig_s$synergy) & sig_s$synergy <= 0
+                sig_s <- sig_s[is_single | is_synergistic, ]
+              }
+              if(nrow(sig_s) > 0) {
+                sig_s$direction <- "Similarity"
+                sig_nonredundant <- rbind(sig_nonredundant, sig_s)
+              }
+            }
+          }
+
+          if(nrow(sig_nonredundant) > 0) {
+            sig_nonredundant <- sig_nonredundant[order(-abs(sig_nonredundant$contribution)), ]
+            if(nrow(sig_nonredundant) > 20) sig_nonredundant <- head(sig_nonredundant, 20)
+
+            par(mar = c(5, 12, 4, 2) + 0.1)
+            bar_colors <- ifelse(sig_nonredundant$direction == "Dissimilarity", "#E74C3C", "#3498DB")
+            x_max <- max(abs(sig_nonredundant$contribution), na.rm = TRUE) * 1.3
+            bp <- barplot(sig_nonredundant$contribution, horiz = TRUE, names.arg = sig_nonredundant$nodes,
+                         las = 1, col = bar_colors, border = NA, xlim = c(-x_max, x_max),
+                         main = "Significant Region Combinations", xlab = "Contribution Score",
+                         cex.names = 0.75)
+            abline(v = 0, lty = 2, lwd = 2, col = "gray50")
+            legend("topright", legend = c("Dissimilarity", "Similarity"), fill = c("#E74C3C", "#3498DB"), bty = "n")
+          } else {
+            plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "No significant combinations")
+          }
+          dev.off()
+        }
+
+        # ==========================================
+        # 2. SAVE NETWORK VISUALIZATION (Part 5)
+        # ==========================================
+        sig_only <- input$contrib_viz_sig_only %||% TRUE
+        synergistic_only <- input$contrib_viz_synergistic %||% FALSE
+
+        node_summary <- compute_node_contribution_summary(discovery, sig_only = sig_only, synergistic_only = synergistic_only)
+
+        if(!is.null(node_summary) && nrow(node_summary) > 0 && !is.null(results$avg_cor)) {
+          # Save Split Circle visualization
+          plot_file <- file.path(temp_base, "02_ContributionNetwork_SplitCircles.png")
+          png(plot_file, width = 14, height = 10, units = "in", res = 300)
+
+          avg_thresh <- NULL
+          if(!is.null(analysis_results$group_thresholds)) {
+            thresholds <- unlist(analysis_results$group_thresholds)
+            if(length(thresholds) > 0) avg_thresh <- mean(thresholds, na.rm = TRUE)
+          }
+
+          plot_contribution_network_split(
+            avg_cor = results$avg_cor,
+            node_summary = node_summary,
+            brain_areas = ui_state$brain_areas,
+            area_colors = ui_state$area_colors,
+            threshold = avg_thresh,
+            show_inter_edges = TRUE,
+            group1_name = results$group1_name,
+            group2_name = results$group2_name
+          )
+          dev.off()
+
+          # Save Dual Network visualization if group correlations available
+          if(!is.null(results$group1_cor) && !is.null(results$group2_cor)) {
+            plot_file <- file.path(temp_base, "03_ContributionNetwork_DualComparison.png")
+            png(plot_file, width = 14, height = 8, units = "in", res = 300)
+
+            thresh1 <- analysis_results$group_thresholds[[results$group1_name]]
+            thresh2 <- analysis_results$group_thresholds[[results$group2_name]]
+
+            plot_contribution_network_dual(
+              group1_cor = results$group1_cor,
+              group2_cor = results$group2_cor,
+              node_summary = node_summary,
+              group1_name = results$group1_name,
+              group2_name = results$group2_name,
+              brain_areas = ui_state$brain_areas,
+              area_colors = ui_state$area_colors,
+              threshold1 = thresh1,
+              threshold2 = thresh2,
+              layout = "fr"
+            )
+            dev.off()
+          }
+        }
+
+        # ==========================================
+        # 3. SAVE DISSIMILARITY RESULTS CSV
+        # ==========================================
+        if(!is.null(discovery$top_dissimilarity) && nrow(discovery$top_dissimilarity) > 0) {
+          write.csv(discovery$top_dissimilarity,
+                    file.path(temp_base, "Results_Dissimilarity_Combinations.csv"),
+                    row.names = FALSE)
+        }
+
+        # ==========================================
+        # 4. SAVE SIMILARITY RESULTS CSV
+        # ==========================================
+        if(!is.null(discovery$top_similarity) && nrow(discovery$top_similarity) > 0) {
+          write.csv(discovery$top_similarity,
+                    file.path(temp_base, "Results_Similarity_Combinations.csv"),
+                    row.names = FALSE)
+        }
+
+        # ==========================================
+        # 5. SAVE NODE CONTRIBUTION SUMMARY CSV
+        # ==========================================
+        if(!is.null(node_summary) && nrow(node_summary) > 0) {
+          write.csv(node_summary,
+                    file.path(temp_base, "Results_NodeContributionSummary.csv"),
+                    row.names = FALSE)
+        }
+
+        # ==========================================
+        # 6. SAVE SUMMARY TEXT FILE
+        # ==========================================
+        summary_file <- file.path(temp_base, "Analysis_Summary.txt")
+        sink(summary_file)
+
+        cat("ARTIFICIAL BRAIN AREA DISCOVERY - ANALYSIS SUMMARY\n")
+        cat("===================================================\n\n")
+        cat(sprintf("Generated: %s\n\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S")))
+
+        cat("ANALYSIS PARAMETERS\n")
+        cat("-------------------\n")
+        cat(sprintf("Comparison: %s vs %s\n", discovery$group1_name, discovery$group2_name))
+        cat(sprintf("Total combinations tested: %s\n", format(discovery$total_combinations, big.mark = ",")))
+        cat(sprintf("Max combination size: %d regions\n", discovery$max_combo_size))
+        cat(sprintf("Permutations per candidate: %d\n", discovery$n_permutations))
+        cat(sprintf("Top candidates tested: %d per direction\n", discovery$top_n_tested))
+
+        correction_label <- switch(discovery$correction_method,
+                                  "fdr" = "FDR (Benjamini-Hochberg)",
+                                  "bonferroni" = "Bonferroni",
+                                  "holm" = "Holm",
+                                  "none" = "None",
+                                  discovery$correction_method)
+        cat(sprintf("Multiple comparison correction: %s\n\n", correction_label))
+
+        cat("BASELINE JACCARDS\n")
+        cat("-----------------\n")
+        if(!is.null(discovery$baseline_weighted) && !is.na(discovery$baseline_weighted))
+          cat(sprintf("Weighted approach: %.4f\n", discovery$baseline_weighted))
+        if(!is.null(discovery$baseline_percolation) && !is.na(discovery$baseline_percolation))
+          cat(sprintf("Percolation approach: %.4f\n", discovery$baseline_percolation))
+        if(!is.null(discovery$baseline_persistence) && !is.na(discovery$baseline_persistence))
+          cat(sprintf("Persistence approach: %.4f\n", discovery$baseline_persistence))
+
+        cat("\n\nRESULTS SUMMARY\n")
+        cat("---------------\n")
+        cat(sprintf("Significant dissimilarity combinations: %d\n", discovery$n_significant_dissim))
+        cat(sprintf("Significant similarity combinations: %d\n\n", discovery$n_significant_sim))
+
+        # Top dissimilarity
+        if(!is.null(discovery$top_dissimilarity) && nrow(discovery$top_dissimilarity) > 0) {
+          sig_d <- discovery$top_dissimilarity[discovery$top_dissimilarity$significant == TRUE, ]
+          cat("TOP DISSIMILARITY CANDIDATES (significant, q < 0.05):\n")
+          if(nrow(sig_d) > 0) {
+            for(i in 1:min(10, nrow(sig_d))) {
+              cat(sprintf("  %d. %s\n", i, sig_d$nodes[i]))
+              cat(sprintf("      Contribution: %.4f, Synergy: %.4f, q-value: %.2e\n",
+                         sig_d$contribution[i], sig_d$synergy[i], sig_d$p_adjusted[i]))
+            }
+          } else {
+            cat("  None reached significance\n")
+          }
+        }
+
+        # Top similarity
+        if(!is.null(discovery$top_similarity) && nrow(discovery$top_similarity) > 0) {
+          sig_s <- discovery$top_similarity[discovery$top_similarity$significant == TRUE, ]
+          cat("\nTOP SIMILARITY CANDIDATES (significant, q < 0.05):\n")
+          if(nrow(sig_s) > 0) {
+            for(i in 1:min(10, nrow(sig_s))) {
+              cat(sprintf("  %d. %s\n", i, sig_s$nodes[i]))
+              cat(sprintf("      Contribution: %.4f, Synergy: %.4f, q-value: %.2e\n",
+                         sig_s$contribution[i], sig_s$synergy[i], sig_s$p_adjusted[i]))
+            }
+          } else {
+            cat("  None reached significance\n")
+          }
+        }
+
+        cat("\n\nINTERPRETATION\n")
+        cat("--------------\n")
+        cat("DISSIMILARITY combinations: Removing these regions INCREASES group similarity.\n")
+        cat("  -> These region combinations drive DIFFERENCES between groups.\n\n")
+        cat("SIMILARITY combinations: Removing these regions DECREASES group similarity.\n")
+        cat("  -> These region combinations drive COMMONALITY between groups.\n\n")
+
+        cat("Synergy score interpretation:\n")
+        cat("  - Synergy > 0: Combination effect exceeds sum of individual effects (synergistic)\n")
+        cat("  - Synergy ~ 0: Combination effect equals sum of individuals (additive)\n")
+        cat("  - Synergy < 0: Combination effect less than sum of individuals (redundant)\n")
+
+        sink()
+
+        # ==========================================
+        # 7. CREATE ZIP FILE
+        # ==========================================
+        files_to_zip <- list.files(temp_base, full.names = TRUE)
+        file_names <- basename(files_to_zip)
+
+        old_wd <- getwd()
+        setwd(temp_base)
+
+        zip_result <- utils::zip(
+          zipfile = file,
+          files = file_names,
+          flags = "-r9Xq"
+        )
+
+        setwd(old_wd)
+
+        if(zip_result != 0) {
+          tar_file <- sub("\\.zip$", ".tar.gz", file)
+          tar(tar_file, files = files_to_zip, compression = "gzip")
+          file.rename(tar_file, file)
+        }
+
+        showNotification("Download ready! ZIP contains plots, data tables, and summary.",
+                        type = "message", duration = 3)
+
+      }, error = function(e) {
+        showNotification(sprintf("Error creating download: %s", e$message),
+                        type = "error", duration = 5)
+      }, finally = {
+        # Clean up temp directory
+        unlink(temp_base, recursive = TRUE)
+      })
+    }
+  )
 
   # 7l. Regional Consensus Aggregates - Mean consensus scores by brain region with error bars
   output$consensusRegionalPlot <- renderPlot({
