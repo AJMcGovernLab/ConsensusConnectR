@@ -555,10 +555,16 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
       all_ci_lower <- numeric(n_candidates)
       all_ci_upper <- numeric(n_candidates)
 
-      # Pilot batch: enough candidates to measure reliably (min thread utilization)
-      pilot_size <- min(min_chunk_for_threads, n_candidates)
+      # Chunk sizing for smooth progress updates
+      # NOTE: With C++ OpenMP, each candidate already uses ALL threads for its permutations,
+      # so we don't need large chunks for thread utilization. Smaller chunks = smoother progress.
+      TARGET_CHUNK_SECONDS <- 0.5  # Aim for ~0.5 second chunks
+      MAX_CHUNK_PERCENT <- 0.05    # Cap at 5% of total (at least 20 updates)
 
-      progress_callback(0.05)  # Show we started
+      # Pilot batch: small sample just to measure speed (2% or 20 candidates, whichever is larger)
+      pilot_size <- max(20, min(ceiling(n_candidates * 0.02), n_candidates))
+
+      progress_callback(0.01)  # Show we started
 
       pilot_start <- Sys.time()
       pilot_result <- batch_permutation_test_cpp(
@@ -581,24 +587,17 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
       # Calculate time per candidate from pilot
       time_per_candidate <- pilot_elapsed / pilot_size
 
-      # Size chunks for smooth progress updates
-      # - TARGET_CHUNK_SECONDS: aim for ~0.5 second chunks for responsive progress
-      # - MAX_CHUNK_PERCENT: cap at 5% of total to ensure at least 20 updates
-      TARGET_CHUNK_SECONDS <- 0.5
-      MAX_CHUNK_PERCENT <- 0.05
       remaining <- n_candidates - pilot_size
 
       if (remaining > 0) {
         # Calculate chunk size based on measured speed
         time_based_chunk <- ceiling(TARGET_CHUNK_SECONDS / max(time_per_candidate, 0.001))
 
-        # Cap chunk size to ensure frequent progress updates
+        # Cap chunk size to ensure frequent progress updates (at least 20 updates)
         max_chunk_by_percent <- max(1, ceiling(n_candidates * MAX_CHUNK_PERCENT))
 
-        adaptive_chunk_size <- max(
-          min_chunk_for_threads,
-          min(time_based_chunk, max_chunk_by_percent)  # Take smaller of time-based and percent-based
-        )
+        # Use the SMALLER of time-based and percent-based (no minimum override)
+        adaptive_chunk_size <- max(1, min(time_based_chunk, max_chunk_by_percent))
 
         current_idx <- pilot_size + 1
 
