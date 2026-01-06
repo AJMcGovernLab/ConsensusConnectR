@@ -581,16 +581,23 @@ batch_test_candidates_fast <- function(networks_g1, networks_g2, node_names,
       # Calculate time per candidate from pilot
       time_per_candidate <- pilot_elapsed / pilot_size
 
-      # Size remaining chunks for TARGET_CHUNK_SECONDS (responsive but efficient)
-      TARGET_CHUNK_SECONDS <- 2.0
+      # Size chunks for smooth progress updates
+      # - TARGET_CHUNK_SECONDS: aim for ~0.5 second chunks for responsive progress
+      # - MAX_CHUNK_PERCENT: cap at 5% of total to ensure at least 20 updates
+      TARGET_CHUNK_SECONDS <- 0.5
+      MAX_CHUNK_PERCENT <- 0.05
       remaining <- n_candidates - pilot_size
 
       if (remaining > 0) {
-        # Calculate chunk size for ~2 second intervals
-        # Ensure minimum thread utilization
+        # Calculate chunk size based on measured speed
+        time_based_chunk <- ceiling(TARGET_CHUNK_SECONDS / max(time_per_candidate, 0.001))
+
+        # Cap chunk size to ensure frequent progress updates
+        max_chunk_by_percent <- max(1, ceiling(n_candidates * MAX_CHUNK_PERCENT))
+
         adaptive_chunk_size <- max(
           min_chunk_for_threads,
-          ceiling(TARGET_CHUNK_SECONDS / max(time_per_candidate, 0.001))
+          min(time_based_chunk, max_chunk_by_percent)  # Take smaller of time-based and percent-based
         )
 
         current_idx <- pilot_size + 1
