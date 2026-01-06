@@ -1154,7 +1154,7 @@ create_summary_ui <- function() {
                 column(4,
                   selectInput("contrib_viz_type", "Visualization Type:",
                               choices = c("Single Network (Colored Nodes)" = "single",
-                                        "Dual Networks (Side-by-Side)" = "dual"),
+                                        "Comparison (Edge Differences)" = "dual"),
                               selected = "single"),
                   checkboxInput("contrib_viz_sig_only", "Significant combinations only (p < 0.05)", TRUE),
                   checkboxInput("contrib_viz_synergistic", "Synergistic combinations only", FALSE),
@@ -1169,9 +1169,11 @@ create_summary_ui <- function() {
                 )
               ),
 
-              tags$p(tags$em("Figure: Network visualization showing regional contributions to group similarity (blue) vs dissimilarity (red).
-                     Node size reflects frequency of appearance in significant combinations. Single network view uses a diverging color scale
-                     based on net direction; dual view shows intensity-based coloring for each direction separately."),
+              tags$p(tags$em("Figure: Network visualization showing only regions found in significant combinations (post-correction).
+                     Node color indicates contribution direction: blue = similarity drivers, red = dissimilarity drivers.
+                     Node size reflects frequency of appearance in significant combinations. Single view shows average network;
+                     comparison view shows edges colored by which group has stronger connectivity (red/orange = Group 1, purple/blue = Group 2),
+                     with thicker edges indicating larger correlation differences between groups."),
                      style = "font-size: 0.9em; color: #666; margin-top: 10px;"),
               hr()
             ),
@@ -10202,13 +10204,17 @@ server <- function(input, output, session) {
 
           setProgress(0.98, detail = "Finalizing...")
 
-          # Get average correlation matrix for visualization
+          # Get correlation matrices for visualization (both groups + average)
           avg_cor <- NULL
+          group1_cor <- NULL
+          group2_cor <- NULL
           for(method in methods) {
             if(!is.null(analysis_results$correlation_methods_raw[[method]])) {
               m1 <- analysis_results$correlation_methods_raw[[method]][[input$regional_contrib_group1]]
               m2 <- analysis_results$correlation_methods_raw[[method]][[input$regional_contrib_group2]]
               if(!is.null(m1) && !is.null(m2)) {
+                group1_cor <- m1
+                group2_cor <- m2
                 avg_cor <- (abs(m1) + abs(m2)) / 2
                 break
               }
@@ -10240,7 +10246,9 @@ server <- function(input, output, session) {
           discovery = brute_result,
           group1_name = input$regional_contrib_group1,
           group2_name = input$regional_contrib_group2,
-          avg_cor = avg_cor
+          avg_cor = avg_cor,
+          group1_cor = group1_cor,
+          group2_cor = group2_cor
         ))
 
       }, error = function(e) {
@@ -11555,45 +11563,36 @@ server <- function(input, output, session) {
       return()
     }
 
-    # Create network from average correlation matrix
-    network <- NULL
-    if(!is.null(results$avg_cor)) {
-      # Create igraph network from correlation matrix
-      adj_mat <- abs(results$avg_cor)
-      diag(adj_mat) <- 0
-
-      # Threshold to keep only strong connections for visualization
-      threshold <- quantile(adj_mat[adj_mat > 0], 0.7, na.rm = TRUE)
-      adj_mat[adj_mat < threshold] <- 0
-
-      if(requireNamespace("igraph", quietly = TRUE)) {
-        network <- igraph::graph_from_adjacency_matrix(
-          adj_mat,
-          mode = "undirected",
-          weighted = TRUE,
-          diag = FALSE
-        )
-      }
-    }
-
-    if(is.null(network)) {
+    # Check for required correlation matrices
+    if(is.null(results$avg_cor)) {
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
-      text(1, 1, "Could not create network\n(correlation matrix not available)", cex = 1.0, col = "gray50")
+      text(1, 1, "Correlation matrix not available", cex = 1.0, col = "gray50")
       return()
     }
 
     # Call appropriate plotting function
+    # Networks are created inside the plotting functions, filtered to significant nodes only
     if(viz_type == "single") {
       plot_contribution_network_single(
-        network = network,
+        avg_cor = results$avg_cor,
         node_summary = node_summary,
         brain_areas = ui_state$brain_areas,
         layout = layout_type
       )
     } else {
+      # Dual view: show Group 1 vs Group 2 networks
+      if(is.null(results$group1_cor) || is.null(results$group2_cor)) {
+        plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+        text(1, 1, "Group correlation matrices not available\n(re-run analysis)", cex = 1.0, col = "gray50")
+        return()
+      }
+
       plot_contribution_network_dual(
-        network = network,
+        group1_cor = results$group1_cor,
+        group2_cor = results$group2_cor,
         node_summary = node_summary,
+        group1_name = results$group1_name,
+        group2_name = results$group2_name,
         brain_areas = ui_state$brain_areas,
         layout = layout_type
       )

@@ -1221,12 +1221,13 @@ compute_node_contribution_summary <- function(discovery_results, sig_only = TRUE
 #'
 #' Creates a network plot with nodes colored by their contribution direction
 #' Blue = similarity drivers, Red = dissimilarity drivers
+#' Only includes nodes that appear in significant combinations
 #'
-#' @param network igraph network object
+#' @param avg_cor Average correlation matrix (used to create network edges)
 #' @param node_summary Data frame from compute_node_contribution_summary()
 #' @param brain_areas Named vector mapping regions to brain areas
 #' @param layout Layout type: "fr", "circle", or "kk"
-plot_contribution_network_single <- function(network, node_summary, brain_areas = NULL, layout = "fr") {
+plot_contribution_network_single <- function(avg_cor, node_summary, brain_areas = NULL, layout = "fr") {
 
   if(!requireNamespace("igraph", quietly = TRUE)) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -1234,9 +1235,9 @@ plot_contribution_network_single <- function(network, node_summary, brain_areas 
     return()
   }
 
-  if(is.null(network) || igraph::vcount(network) == 0) {
+  if(is.null(avg_cor)) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
-    text(1, 1, "No network available", cex = 1.2, col = "gray50")
+    text(1, 1, "Correlation matrix not available", cex = 1.2, col = "gray50")
     return()
   }
 
@@ -1246,9 +1247,61 @@ plot_contribution_network_single <- function(network, node_summary, brain_areas 
     return()
   }
 
+  # Get nodes that are in significant combinations
+  sig_nodes <- node_summary$node
+
+  if(length(sig_nodes) < 2) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Need at least 2 significant regions to create network", cex = 1.0, col = "gray50")
+    return()
+  }
+
+  # Get indices of significant nodes in the correlation matrix
+  all_nodes <- rownames(avg_cor)
+  if(is.null(all_nodes)) all_nodes <- colnames(avg_cor)
+  if(is.null(all_nodes)) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Correlation matrix has no node names", cex = 1.0, col = "gray50")
+    return()
+  }
+
+  sig_indices <- which(all_nodes %in% sig_nodes)
+  if(length(sig_indices) < 2) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Significant nodes not found in correlation matrix", cex = 1.0, col = "gray50")
+    return()
+  }
+
+  # Subset correlation matrix to significant nodes only
+  sub_cor <- avg_cor[sig_indices, sig_indices, drop = FALSE]
+
+  # Create adjacency matrix from correlations
+  adj_mat <- abs(sub_cor)
+  diag(adj_mat) <- 0
+
+  # Apply threshold to keep meaningful edges
+  if(sum(adj_mat > 0, na.rm = TRUE) > 0) {
+    threshold <- quantile(adj_mat[adj_mat > 0], 0.5, na.rm = TRUE)
+    adj_mat[adj_mat < threshold] <- 0
+  }
+
+  # Create igraph network
+  network <- igraph::graph_from_adjacency_matrix(
+    adj_mat,
+    mode = "undirected",
+    weighted = TRUE,
+    diag = FALSE
+  )
+
+  if(igraph::vcount(network) == 0) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Could not create network", cex = 1.0, col = "gray50")
+    return()
+  }
+
   # Color function based on direction ratio
   get_node_color <- function(ratio) {
-    if(is.na(ratio) || ratio == 0) return("#808080")  # Gray for no contribution
+    if(is.na(ratio) || ratio == 0) return("#808080")  # Gray for balanced
 
     if(ratio < -0.3) return("#2166AC")       # Strong similarity (dark blue)
     if(ratio < 0) return("#67A9CF")           # Weak similarity (light blue)
@@ -1257,21 +1310,22 @@ plot_contribution_network_single <- function(network, node_summary, brain_areas 
     return("#D1D1D1")                         # Balanced (light gray)
   }
 
-  # Match node summary to network nodes
+  # Get node names from network
   node_names <- igraph::V(network)$name
   if(is.null(node_names)) node_names <- paste0("V", 1:igraph::vcount(network))
 
+  # Set node colors based on contribution direction
   node_colors <- sapply(node_names, function(n) {
     idx <- which(node_summary$node == n)
-    if(length(idx) == 0) return("#E0E0E0")  # Not in any combination
+    if(length(idx) == 0) return("#E0E0E0")
     get_node_color(node_summary$direction_ratio[idx])
   })
 
   # Node size based on total involvement
   node_sizes <- sapply(node_names, function(n) {
     idx <- which(node_summary$node == n)
-    if(length(idx) == 0) return(5)
-    5 + sqrt(node_summary$total_count[idx]) * 3
+    if(length(idx) == 0) return(6)
+    6 + sqrt(node_summary$total_count[idx]) * 3
   })
 
   # Set vertex attributes
@@ -1286,12 +1340,16 @@ plot_contribution_network_single <- function(network, node_summary, brain_areas 
                       igraph::layout_with_fr
   )
 
+  set.seed(42)
   coords <- layout_fn(network)
 
   # Edge styling
   edge_weights <- igraph::E(network)$weight
-  if(is.null(edge_weights)) edge_weights <- rep(0.5, igraph::ecount(network))
-  edge_widths <- pmax(0.5, abs(edge_weights) * 1.5)
+  if(is.null(edge_weights) || length(edge_weights) == 0) {
+    edge_widths <- rep(1, igraph::ecount(network))
+  } else {
+    edge_widths <- pmax(0.5, abs(edge_weights) * 2)
+  }
 
   # Plot
   par(mar = c(1, 1, 3, 1))
@@ -1303,29 +1361,34 @@ plot_contribution_network_single <- function(network, node_summary, brain_areas 
        vertex.frame.color = "gray40",
        edge.width = edge_widths,
        edge.color = adjustcolor("gray50", alpha.f = 0.4),
-       main = "Regional Contributions to Network Similarity/Dissimilarity")
+       main = "Regional Contributions to Network Similarity/Dissimilarity\n(Significant Regions Only)")
 
   # Add legend
   legend("bottomleft",
-         legend = c("Strong Similarity", "Weak Similarity", "Balanced/None",
-                    "Weak Dissimilarity", "Strong Dissimilarity", "Not in Results"),
-         fill = c("#2166AC", "#67A9CF", "#D1D1D1", "#EF8A62", "#B2182B", "#E0E0E0"),
+         legend = c("Strong Similarity", "Weak Similarity", "Balanced",
+                    "Weak Dissimilarity", "Strong Dissimilarity"),
+         fill = c("#2166AC", "#67A9CF", "#D1D1D1", "#EF8A62", "#B2182B"),
          title = "Contribution Direction",
          cex = 0.7,
          bg = "white")
 }
 
 
-#' Plot Dual Contribution Networks
+#' Plot Dual Contribution Networks (Group 1 vs Group 2)
 #'
-#' Creates side-by-side network plots showing similarity and dissimilarity
-#' contributors separately
+#' Creates a network comparison plot with nodes colored by contribution direction
+#' and edges colored using Jaccard-based classification (shared vs unique edges)
 #'
-#' @param network igraph network object
+#' @param group1_cor Correlation matrix for Group 1
+#' @param group2_cor Correlation matrix for Group 2
 #' @param node_summary Data frame from compute_node_contribution_summary()
+#' @param group1_name Name of Group 1
+#' @param group2_name Name of Group 2
 #' @param brain_areas Named vector mapping regions to brain areas
 #' @param layout Layout type: "fr", "circle", or "kk"
-plot_contribution_network_dual <- function(network, node_summary, brain_areas = NULL, layout = "fr") {
+plot_contribution_network_dual <- function(group1_cor, group2_cor, node_summary,
+                                           group1_name = "Group 1", group2_name = "Group 2",
+                                           brain_areas = NULL, layout = "fr") {
 
   if(!requireNamespace("igraph", quietly = TRUE)) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -1333,9 +1396,9 @@ plot_contribution_network_dual <- function(network, node_summary, brain_areas = 
     return()
   }
 
-  if(is.null(network) || igraph::vcount(network) == 0) {
+  if(is.null(group1_cor) || is.null(group2_cor)) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
-    text(1, 1, "No network available", cex = 1.2, col = "gray50")
+    text(1, 1, "Group correlation matrices not available", cex = 1.2, col = "gray50")
     return()
   }
 
@@ -1345,10 +1408,101 @@ plot_contribution_network_dual <- function(network, node_summary, brain_areas = 
     return()
   }
 
-  # Set up dual panel layout
-  par(mfrow = c(1, 2), mar = c(2, 1, 3, 1), oma = c(0, 0, 2, 0))
+  # Get nodes that are in significant combinations
+  sig_nodes <- node_summary$node
 
-  # Get consistent layout for both plots
+  if(length(sig_nodes) == 0) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "No significant regions found", cex = 1.1, col = "gray50")
+    return()
+  }
+
+  # Get indices of significant nodes
+  all_nodes <- rownames(group1_cor)
+  if(is.null(all_nodes)) all_nodes <- colnames(group1_cor)
+  if(is.null(all_nodes)) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Correlation matrix has no node names", cex = 1.0, col = "gray50")
+    return()
+  }
+
+  sig_indices <- which(all_nodes %in% sig_nodes)
+  if(length(sig_indices) < 2) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Need at least 2 significant regions", cex = 1.0, col = "gray50")
+    return()
+  }
+
+  # Subset both correlation matrices to significant nodes
+  sub_cor1 <- group1_cor[sig_indices, sig_indices, drop = FALSE]
+  sub_cor2 <- group2_cor[sig_indices, sig_indices, drop = FALSE]
+
+  # Create binary adjacency matrices using threshold (top 50% of edges)
+  abs_cor1 <- abs(sub_cor1)
+  abs_cor2 <- abs(sub_cor2)
+  diag(abs_cor1) <- 0
+  diag(abs_cor2) <- 0
+
+  # Use median of non-zero values as threshold for each group
+  nz_vals1 <- abs_cor1[abs_cor1 > 0]
+  nz_vals2 <- abs_cor2[abs_cor2 > 0]
+
+  thresh1 <- if(length(nz_vals1) > 0) quantile(nz_vals1, 0.5, na.rm = TRUE) else 0
+  thresh2 <- if(length(nz_vals2) > 0) quantile(nz_vals2, 0.5, na.rm = TRUE) else 0
+
+  # Binary adjacency: 1 if edge exists, 0 otherwise
+  binary1 <- (abs_cor1 >= thresh1) * 1
+  binary2 <- (abs_cor2 >= thresh2) * 1
+
+  # Classify edges: shared (both), G1-only, G2-only
+  # shared = both have edge, g1_only = only G1 has edge, g2_only = only G2 has edge
+  shared_edges <- (binary1 == 1) & (binary2 == 1)
+  g1_only_edges <- (binary1 == 1) & (binary2 == 0)
+  g2_only_edges <- (binary1 == 0) & (binary2 == 1)
+
+  # Calculate Jaccard similarity for edges
+  # Jaccard = intersection / union
+  intersection_count <- sum(shared_edges[upper.tri(shared_edges)])
+  union_count <- sum((binary1 | binary2)[upper.tri(binary1)])
+  jaccard_similarity <- if(union_count > 0) intersection_count / union_count else 0
+
+  # Count edge types
+  n_shared <- sum(shared_edges[upper.tri(shared_edges)])
+  n_g1_only <- sum(g1_only_edges[upper.tri(g1_only_edges)])
+  n_g2_only <- sum(g2_only_edges[upper.tri(g2_only_edges)])
+
+  # Create combined network using union of edges
+  union_adj <- pmax(abs_cor1, abs_cor2)
+  union_binary <- (binary1 | binary2) * 1
+
+  # For visualization, use correlation strength as weight but filter to significant edges
+  combined_adj <- union_adj * union_binary
+
+  # Create network
+  network <- igraph::graph_from_adjacency_matrix(
+    combined_adj,
+    mode = "undirected",
+    weighted = TRUE,
+    diag = FALSE
+  )
+
+  if(igraph::vcount(network) < 2) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Could not create network", cex = 1.0, col = "gray50")
+    return()
+  }
+
+  # Color function for nodes based on direction ratio
+  get_node_color <- function(ratio) {
+    if(is.na(ratio) || ratio == 0) return("#808080")
+    if(ratio < -0.3) return("#2166AC")
+    if(ratio < 0) return("#67A9CF")
+    if(ratio > 0.3) return("#B2182B")
+    if(ratio > 0) return("#EF8A62")
+    return("#D1D1D1")
+  }
+
+  # Get layout
   layout_fn <- switch(layout,
                       "fr" = igraph::layout_with_fr,
                       "circle" = igraph::layout_in_circle,
@@ -1356,95 +1510,106 @@ plot_contribution_network_dual <- function(network, node_summary, brain_areas = 
                       igraph::layout_with_fr
   )
 
-  # Use seed for reproducible force-directed layouts
   set.seed(42)
   coords <- layout_fn(network)
 
+  # Get node names
   node_names <- igraph::V(network)$name
   if(is.null(node_names)) node_names <- paste0("V", 1:igraph::vcount(network))
 
-  # Edge styling
-  edge_weights <- igraph::E(network)$weight
-  if(is.null(edge_weights)) edge_weights <- rep(0.5, igraph::ecount(network))
-  edge_widths <- pmax(0.3, abs(edge_weights) * 1.2)
-
-  # --- LEFT PLOT: Similarity Contributors ---
-  max_sim_count <- max(node_summary$sim_count, 1, na.rm = TRUE)
-
-  sim_colors <- sapply(node_names, function(n) {
+  # Set node colors and sizes
+  node_colors <- sapply(node_names, function(n) {
     idx <- which(node_summary$node == n)
-    if(length(idx) == 0 || node_summary$sim_count[idx] == 0) return("#E8E8E8")
-    # Intensity based on count
-    intensity <- min(1, node_summary$sim_count[idx] / max_sim_count)
-    colorRampPalette(c("#DEEBF7", "#2166AC"))(100)[ceiling(intensity * 99) + 1]
+    if(length(idx) == 0) return("#E0E0E0")
+    get_node_color(node_summary$direction_ratio[idx])
   })
 
-  sim_sizes <- sapply(node_names, function(n) {
+  node_sizes <- sapply(node_names, function(n) {
     idx <- which(node_summary$node == n)
-    if(length(idx) == 0 || node_summary$sim_count[idx] == 0) return(4)
-    4 + sqrt(node_summary$sim_count[idx]) * 4
+    if(length(idx) == 0) return(10)
+    10 + sqrt(node_summary$total_count[idx]) * 4
   })
 
-  igraph::V(network)$color <- sim_colors
-  igraph::V(network)$size <- sim_sizes
+  igraph::V(network)$color <- node_colors
+  igraph::V(network)$size <- node_sizes
 
+  # Compute edge colors based on Jaccard classification
+  edge_list <- igraph::as_edgelist(network)
+  edge_colors <- character(nrow(edge_list))
+  edge_widths <- numeric(nrow(edge_list))
+
+  for(i in 1:nrow(edge_list)) {
+    n1 <- edge_list[i, 1]
+    n2 <- edge_list[i, 2]
+    # Find indices in sub matrices
+    idx1 <- which(rownames(sub_cor1) == n1)
+    idx2 <- which(rownames(sub_cor1) == n2)
+
+    if(length(idx1) == 0 || length(idx2) == 0) {
+      edge_colors[i] <- adjustcolor("gray50", alpha.f = 0.3)
+      edge_widths[i] <- 1.5
+    } else {
+      # Determine edge type
+      in_g1 <- binary1[idx1, idx2] == 1
+      in_g2 <- binary2[idx1, idx2] == 1
+
+      if(in_g1 && in_g2) {
+        # Shared edge - gray
+        edge_colors[i] <- "#7F8C8D"  # Gray
+        edge_widths[i] <- 2
+      } else if(in_g1 && !in_g2) {
+        # Group 1 only - red/orange
+        edge_colors[i] <- "#E74C3C"  # Red
+        edge_widths[i] <- 3
+      } else if(!in_g1 && in_g2) {
+        # Group 2 only - purple/blue
+        edge_colors[i] <- "#8E44AD"  # Purple
+        edge_widths[i] <- 3
+      } else {
+        # Should not happen since we filtered to union
+        edge_colors[i] <- adjustcolor("gray50", alpha.f = 0.3)
+        edge_widths[i] <- 1
+      }
+    }
+  }
+
+  # Set up layout with room for legend and subtitle
+  par(mar = c(6, 1, 4, 1))
+
+  # Plot
   plot(network, layout = coords,
        vertex.label = node_names,
-       vertex.label.cex = 0.55,
+       vertex.label.cex = 0.6,
        vertex.label.color = "black",
-       vertex.frame.color = adjustcolor("gray50", alpha.f = 0.5),
+       vertex.frame.color = "gray40",
        edge.width = edge_widths,
-       edge.color = adjustcolor("gray60", alpha.f = 0.35),
-       main = "Similarity Contributors")
+       edge.color = edge_colors,
+       main = paste("Network Comparison:", group1_name, "vs", group2_name, "\n(Significant Regions Only)"))
 
-  # Left legend
-  legend("bottomleft",
-         legend = c(paste0("High (", max_sim_count, ")"), "Low (1)", "None"),
-         fill = c("#2166AC", "#DEEBF7", "#E8E8E8"),
-         title = "Count",
-         cex = 0.6,
+  # Add node legend
+  legend("topleft",
+         legend = c("Similarity Driver", "Dissimilarity Driver", "Balanced"),
+         fill = c("#2166AC", "#B2182B", "#D1D1D1"),
+         title = "Node Color",
+         cex = 0.7,
          bg = "white")
 
-  # --- RIGHT PLOT: Dissimilarity Contributors ---
-  max_dissim_count <- max(node_summary$dissim_count, 1, na.rm = TRUE)
-
-  dissim_colors <- sapply(node_names, function(n) {
-    idx <- which(node_summary$node == n)
-    if(length(idx) == 0 || node_summary$dissim_count[idx] == 0) return("#E8E8E8")
-    intensity <- min(1, node_summary$dissim_count[idx] / max_dissim_count)
-    colorRampPalette(c("#FEE0D2", "#B2182B"))(100)[ceiling(intensity * 99) + 1]
-  })
-
-  dissim_sizes <- sapply(node_names, function(n) {
-    idx <- which(node_summary$node == n)
-    if(length(idx) == 0 || node_summary$dissim_count[idx] == 0) return(4)
-    4 + sqrt(node_summary$dissim_count[idx]) * 4
-  })
-
-  igraph::V(network)$color <- dissim_colors
-  igraph::V(network)$size <- dissim_sizes
-
-  plot(network, layout = coords,
-       vertex.label = node_names,
-       vertex.label.cex = 0.55,
-       vertex.label.color = "black",
-       vertex.frame.color = adjustcolor("gray50", alpha.f = 0.5),
-       edge.width = edge_widths,
-       edge.color = adjustcolor("gray60", alpha.f = 0.35),
-       main = "Dissimilarity Contributors")
-
-  # Right legend
-  legend("bottomleft",
-         legend = c(paste0("High (", max_dissim_count, ")"), "Low (1)", "None"),
-         fill = c("#B2182B", "#FEE0D2", "#E8E8E8"),
-         title = "Count",
-         cex = 0.6,
+  # Add edge legend with counts
+  legend("topright",
+         legend = c(paste0("Unique to ", group1_name, " (", n_g1_only, ")"),
+                   paste0("Unique to ", group2_name, " (", n_g2_only, ")"),
+                   paste0("Shared (", n_shared, ")")),
+         col = c("#E74C3C", "#8E44AD", "#7F8C8D"),
+         lwd = c(3, 3, 2),
+         title = "Edge Type (Jaccard)",
+         cex = 0.7,
          bg = "white")
 
-  # Overall title
-  mtext("Regional Contributions to Network Similarity vs Dissimilarity",
-        outer = TRUE, cex = 1.1, font = 2, line = 0.5)
+  # Add Jaccard similarity subtitle
+  mtext(sprintf("Edge Jaccard Similarity: %.3f  |  Shared: %d, %s-only: %d, %s-only: %d",
+                jaccard_similarity, n_shared, group1_name, n_g1_only, group2_name, n_g2_only),
+        side = 1, line = 3, cex = 0.75, col = "gray30")
 
-  # Reset layout
-  par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1, oma = c(0, 0, 0, 0))
+  mtext("Edges thresholded at median correlation strength per group",
+        side = 1, line = 4.2, cex = 0.7, col = "gray50")
 }
