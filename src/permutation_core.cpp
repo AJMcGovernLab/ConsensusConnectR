@@ -743,7 +743,7 @@ Rcpp::List batch_permutation_test_cpp(
   // Initialize progress tracking
   g_progress_counter.store(0);
   g_progress_total.store(n_candidates);
-  g_progress_file_path = Rcpp::as<std::string>(progress_file);
+  g_progress_file_path = std::string(progress_file.get_cstring());
 
   // Calculate update interval (write every ~1% or at least every 10 candidates)
   int progress_update_interval = std::max(1, std::min(n_candidates / 100, 10));
@@ -1033,7 +1033,7 @@ void reset_batch_progress() {
 void init_progress_file(Rcpp::String file_path, int total) {
   g_progress_counter.store(0);
   g_progress_total.store(total);
-  g_progress_file_path = Rcpp::as<std::string>(file_path);
+  g_progress_file_path = std::string(file_path.get_cstring());
   write_progress_to_file();  // Write initial state
 }
 
