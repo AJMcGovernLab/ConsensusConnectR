@@ -1164,29 +1164,51 @@ batch_jaccard_contributions_r_fallback <- function(networks_g1, networks_g2,
 }
 
 #' Compute averaged Jaccard in R (helper for fallback)
+#'
+#' Handles both NAMED lists (like weighted$pearson, weighted$spearman) and
+#' UNNAMED lists (like flattened persistence matrices).
+#'
 #' @keywords internal
 compute_averaged_jaccard_r <- function(matrices_g1, matrices_g2,
                                         exclude_nodes = NULL, node_names = NULL) {
 
-  methods <- intersect(names(matrices_g1), names(matrices_g2))
-  if (length(methods) == 0) return(NA_real_)
+  n_matrices <- length(matrices_g1)
+  if (n_matrices == 0 || n_matrices != length(matrices_g2)) {
+    return(NA_real_)
+  }
+
+  # Handle both named and unnamed lists
+  # If named, use names as indices; if unnamed, iterate by position
+  use_names <- !is.null(names(matrices_g1)) && length(names(matrices_g1)) > 0 &&
+               !all(names(matrices_g1) == "")
+
+  if (use_names) {
+    methods <- intersect(names(matrices_g1), names(matrices_g2))
+    if (length(methods) == 0) return(NA_real_)
+    indices <- methods
+  } else {
+    # Unnamed list - iterate by position
+    indices <- seq_len(n_matrices)
+  }
 
   jaccards <- c()
 
-  for (method in methods) {
-    mat1 <- matrices_g1[[method]]
-    mat2 <- matrices_g2[[method]]
+  for (idx in indices) {
+    mat1 <- matrices_g1[[idx]]
+    mat2 <- matrices_g2[[idx]]
 
     if (is.null(mat1) || is.null(mat2)) next
 
     # Apply node exclusion
     if (!is.null(exclude_nodes) && length(exclude_nodes) > 0) {
-      if (is.null(node_names)) {
-        node_names <- rownames(mat1)
-        if (is.null(node_names)) node_names <- colnames(mat1)
+      # Try to get node_names from matrix if not provided
+      local_node_names <- node_names
+      if (is.null(local_node_names)) {
+        local_node_names <- rownames(mat1)
+        if (is.null(local_node_names)) local_node_names <- colnames(mat1)
       }
-      if (!is.null(node_names)) {
-        keep_idx <- which(!(node_names %in% exclude_nodes))
+      if (!is.null(local_node_names)) {
+        keep_idx <- which(!(local_node_names %in% exclude_nodes))
         if (length(keep_idx) >= 3) {
           mat1 <- mat1[keep_idx, keep_idx, drop = FALSE]
           mat2 <- mat2[keep_idx, keep_idx, drop = FALSE]
@@ -1198,6 +1220,8 @@ compute_averaged_jaccard_r <- function(matrices_g1, matrices_g2,
 
     # Compute Jaccard
     n <- nrow(mat1)
+    if (n < 2) next
+
     numerator <- 0
     denominator <- 0
 
@@ -1293,6 +1317,9 @@ batch_persistence_contributions <- function(pers_g1, pers_g2, node_names,
   # Flatten persistence structure
   flat <- flatten_persistence_networks(pers_g1, pers_g2)
 
+  message("[batch_persistence_contributions] Flattened ", flat$n_matrices,
+          " persistence matrices (methods × thresholds)")
+
   if (flat$n_matrices == 0) {
     return(data.frame(
       contribution = rep(NA_real_, length(candidates_list)),
@@ -1301,7 +1328,17 @@ batch_persistence_contributions <- function(pers_g1, pers_g2, node_names,
     ))
   }
 
+  # Verify node_names matches matrix dimensions
+  if (length(flat$flat_g1) > 0) {
+    mat_dim <- nrow(flat$flat_g1[[1]])
+    if (length(node_names) != mat_dim) {
+      warning("[batch_persistence_contributions] node_names length (", length(node_names),
+              ") doesn't match matrix dimension (", mat_dim, ")")
+    }
+  }
+
   # Use the existing batch_jaccard_contributions function on flattened matrices
+  # Note: batch_jaccard_contributions handles both C++ and R fallback internally
   return(batch_jaccard_contributions(
     networks_g1 = flat$flat_g1,
     networks_g2 = flat$flat_g2,
@@ -1330,6 +1367,9 @@ batch_persistence_complement_pairs <- function(pers_g1, pers_g2, node_names,
   # Flatten persistence structure
   flat <- flatten_persistence_networks(pers_g1, pers_g2)
 
+  message("[batch_persistence_complement_pairs] Flattened ", flat$n_matrices,
+          " persistence matrices (methods × thresholds)")
+
   if (flat$n_matrices == 0) {
     n_pairs <- length(combos_list)
     return(list(
@@ -1338,6 +1378,15 @@ batch_persistence_complement_pairs <- function(pers_g1, pers_g2, node_names,
       baseline = NA_real_,
       method = "no_data"
     ))
+  }
+
+  # Verify node_names matches matrix dimensions
+  if (length(flat$flat_g1) > 0) {
+    mat_dim <- nrow(flat$flat_g1[[1]])
+    if (length(node_names) != mat_dim) {
+      warning("[batch_persistence_complement_pairs] node_names length (", length(node_names),
+              ") doesn't match matrix dimension (", mat_dim, ")")
+    }
   }
 
   # Use the existing complement pairs function on flattened matrices
