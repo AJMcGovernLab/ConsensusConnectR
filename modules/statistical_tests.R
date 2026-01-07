@@ -212,12 +212,7 @@ estimate_permutation_runtime <- function(n_tests,
     # - Within each candidate, n_permutations run SERIALLY on that thread
     # - Time = ceil(n_candidates / n_threads) × n_perms × serial_time_per_perm
 
-    # Use optimal_threads from elbow test if available, otherwise fall back to cpp_threads
-    n_threads <- if (!is.null(calibration$optimal_threads) && calibration$optimal_threads > 0) {
-      calibration$optimal_threads
-    } else {
-      calibration$cpp_threads
-    }
+    n_threads <- calibration$cpp_threads
     if (is.null(n_threads) || n_threads <= 0) n_threads <- 1
 
     # Get serial time per permutation (for batch mode)
@@ -683,92 +678,6 @@ calibrate_parallel_performance <- function(analysis_results,
         }
       }
 
-      # ========== OPENMP THREAD ELBOW TEST ==========
-      # Test different thread counts to find optimal (memory bandwidth often limits scaling)
-      optimal_threads <- cpp_threads
-      thread_test_results <- list()
-
-      if (cpp_threads > 16 && exists("batch_test_candidates_fast", mode = "function")) {
-        if (verbose) message("  Running OpenMP thread elbow test...")
-
-        # Test thread counts: 1, max/8, max/4, max/2, 3*max/4, max
-        thread_counts <- unique(sort(c(
-          1,
-          max(2, floor(cpp_threads / 8)),
-          max(4, floor(cpp_threads / 4)),
-          max(8, floor(cpp_threads / 2)),
-          max(12, floor(cpp_threads * 3 / 4)),
-          cpp_threads
-        )))
-
-        # Use same batch candidates for consistent comparison
-        elbow_times <- numeric(length(thread_counts))
-        elbow_speedups <- numeric(length(thread_counts))
-
-        for (idx in seq_along(thread_counts)) {
-          n_t <- thread_counts[idx]
-
-          start_t <- Sys.time()
-          test_result <- tryCatch({
-            batch_test_candidates_fast(
-              networks_g1 = networks_g1,
-              networks_g2 = networks_g2,
-              node_names = node_names,
-              candidates_list = batch_candidates,
-              n_permutations = batch_n_perms,
-              n_threads = n_t,
-              progress_callback = NULL
-            )
-          }, error = function(e) NULL)
-
-          if (!is.null(test_result)) {
-            elapsed_ms <- as.numeric(difftime(Sys.time(), start_t, units = "secs")) * 1000
-            elbow_times[idx] <- elapsed_ms
-            elbow_speedups[idx] <- elbow_times[1] / elapsed_ms  # Speedup vs 1 thread
-
-            thread_test_results[[as.character(n_t)]] <- list(
-              threads = n_t,
-              elapsed_ms = elapsed_ms,
-              speedup = elbow_speedups[idx],
-              efficiency = elbow_speedups[idx] / n_t  # Parallel efficiency
-            )
-
-            if (verbose) {
-              message(sprintf("    %3d threads: %.0f ms (%.1fx speedup, %.0f%% efficiency)",
-                             n_t, elapsed_ms, elbow_speedups[idx], elbow_speedups[idx] / n_t * 100))
-            }
-          }
-        }
-
-        # Find elbow using efficiency drop
-        # Optimal is where adding more threads gives diminishing returns (<50% efficiency gain)
-        if (length(elbow_speedups) >= 3) {
-          efficiencies <- elbow_speedups / thread_counts
-          efficiency_gains <- diff(efficiencies)
-
-          # Find where efficiency gain drops significantly
-          # The elbow is the last point with good efficiency (>15% of ideal)
-          good_efficiency_idx <- which(efficiencies > 0.15)
-          if (length(good_efficiency_idx) > 0) {
-            best_idx <- max(good_efficiency_idx)
-            optimal_threads <- thread_counts[best_idx]
-          }
-
-          # Also check: if max threads is >90% as fast as optimal, use max
-          # (marginally slower but uses full hardware)
-          max_time <- elbow_times[length(elbow_times)]
-          opt_time <- elbow_times[which(thread_counts == optimal_threads)]
-          if (!is.na(max_time) && !is.na(opt_time) && max_time < opt_time * 1.1) {
-            optimal_threads <- cpp_threads
-          }
-
-          if (verbose && optimal_threads != cpp_threads) {
-            message("  ELBOW: Optimal threads = ", optimal_threads,
-                    " (full ", cpp_threads, " threads has diminishing returns)")
-          }
-        }
-      }
-
       # ========== MEASURE ENUMERATION TIME (Phase 1 of brute force) ==========
       # Test with multiple combination sizes for accurate scaling
       if (verbose) message("  Measuring enumeration time (multiple combination sizes)...")
@@ -813,17 +722,8 @@ calibrate_parallel_performance <- function(analysis_results,
         if (verbose) message("  Weighted avg enumeration time: ", round(enum_time_per_combo_ms, 3), " ms/combo")
       }
 
-      # Build recommendation with elbow test results
-      if (optimal_threads != cpp_threads && length(thread_test_results) > 0) {
-        opt_result <- thread_test_results[[as.character(optimal_threads)]]
-        recommendation <- sprintf(
-          "C++ backend: %d threads optimal (%.1fx speedup, %.0f%% efficiency). Max %d threads available but diminishing returns.",
-          optimal_threads, opt_result$speedup, opt_result$efficiency * 100, cpp_threads
-        )
-      } else {
-        recommendation <- sprintf("C++ backend with %d OpenMP threads (%.0fx faster than R)",
-                                   cpp_threads, cpp_speedup)
-      }
+      recommendation <- sprintf("C++ backend with %d OpenMP threads (%.0fx faster than R)",
+                                 cpp_threads, cpp_speedup)
 
       return(list(
         time_per_perm_ms = cpp_time_per_perm,
@@ -843,10 +743,7 @@ calibrate_parallel_performance <- function(analysis_results,
         backend = "cpp_openmp",
         cpp_threads = cpp_threads,
         cpp_speedup = cpp_speedup,
-        # Thread elbow test results
-        optimal_threads = optimal_threads,
-        thread_test_results = thread_test_results,
-        optimal_workers = optimal_threads,  # Use elbow-optimized thread count
+        optimal_workers = cpp_threads,
         optimal_speedup = cpp_speedup,
         use_parallel = TRUE,
         recommendation = recommendation,
