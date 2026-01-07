@@ -9925,9 +9925,9 @@ server <- function(input, output, session) {
         if(is.null(node_names)) node_names <- paste0("Node", 1:nrow(first_mat))
         n_nodes <- length(node_names)
 
-        # Use p/2 for elbow analysis (testing up to half the nodes makes theoretical sense)
-        # You wouldn't typically combine more than half your regions into one "artificial" area
-        max_size_for_elbow <- min(floor(n_nodes / 2), n_nodes - 2)
+        # Test all possible combination sizes (1 to n-1)
+        # This allows finding the true elbow point without arbitrary limits
+        max_size_for_elbow <- n_nodes - 1
 
         setProgress(0.1, detail = "Computing baselines...")
 
