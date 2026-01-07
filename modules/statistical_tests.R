@@ -175,6 +175,14 @@ estimate_permutation_runtime <- function(n_tests,
 
   # ========== PHASE 1: ENUMERATION TIME (for artificial/brute force mode) ==========
   # This is the time to compute Jaccard for each combination WITHOUT permutations
+  #
+  # UPDATED Jan 2026: Enumeration now runs in PARALLEL via C++ for all network types:
+  # - Weighted: batch_jaccard_complement_pairs_cpp()
+  # - Percolation: batch_jaccard_complement_pairs_cpp()
+  # - Persistence: batch_persistence_complement_pairs() -> flattens and uses C++
+  #
+  # Additionally, complement symmetry halves the enumeration work by computing
+  # both combo and complement contributions in a single pass.
   enum_time_ms <- 0
   enum_time_per_combo_ms <- 0
 
@@ -185,21 +193,34 @@ estimate_permutation_runtime <- function(n_tests,
       # Use calibrated enumeration time
       enum_time_per_combo_ms <- calibration$enum_time_per_combo_ms
     } else if (!is.null(n_nodes) && !is.null(n_matrices)) {
-      # Formula-based estimate for enumeration (similar complexity to permutation)
-      # But enumeration involves 3 approach-specific Jaccard computations per combo
+      # Formula-based estimate for enumeration
+      # Complexity: O(n_nodes^2 × n_matrices) per combo, but parallelized
       #
-      # UPDATED for optimized C++ backend (Jan 2026):
-      # Enumeration is also faster with optimized Jaccard computation
-      base_ms <- 0.01  # 10 microseconds base (was 1.0)
-      scaling_factor <- 0.000001  # ~80x smaller (was 0.00008)
+      # UPDATED for C++ parallel enumeration (Jan 2026):
+      # - Enumeration now uses batch C++ calls with OpenMP parallelization
+      # - Complement symmetry halves the work (process pair → get both results)
+      # - All 3 approaches (weighted, percolation, persistence) run in parallel
+      base_ms <- 0.002  # 2 microseconds base (reduced from 0.01)
+      scaling_factor <- 0.0000003  # ~3x smaller due to parallelization
       enum_time_per_combo_ms <- base_ms + (n_nodes^2 * n_matrices * scaling_factor)
     } else {
-      # Fallback estimate - updated for optimized backend
-      enum_time_per_combo_ms <- 0.1  # 100 microseconds (was 10ms)
+      # Fallback estimate - updated for parallel C++ backend
+      enum_time_per_combo_ms <- 0.02  # 20 microseconds (was 0.1)
     }
 
-    # Total enumeration time (Phase 1 runs serially)
-    enum_time_ms <- n_enum_combos * enum_time_per_combo_ms
+    # Total enumeration time
+    # If using C++ backend with complement symmetry, enumeration is parallelized
+    if (using_cpp_backend) {
+      # Enumeration runs in parallel across all CPU threads
+      n_threads <- if (!is.null(calibration$cpp_threads)) calibration$cpp_threads else 1
+      # Effective combinations reduced by complement symmetry (roughly half)
+      # Plus parallel speedup from C++
+      parallel_speedup <- min(n_threads, sqrt(n_enum_combos))  # Diminishing returns at scale
+      enum_time_ms <- (n_enum_combos * enum_time_per_combo_ms) / parallel_speedup
+    } else {
+      # R fallback: enumeration is still sequential
+      enum_time_ms <- n_enum_combos * enum_time_per_combo_ms
+    }
   }
 
   # Total permutation operations (Phase 4-5)

@@ -9568,8 +9568,13 @@ server <- function(input, output, session) {
       # Count matrices: methods × (weighted + percolation + persistence_thresholds)
       n_weighted <- length(methods)
       n_percolation <- length(methods)
-      # Default persistence thresholds: seq(0.1, 0.9, 0.05) = 17 thresholds
-      n_persistence <- length(methods) * 17
+
+      # Calculate actual persistence threshold count from user setting
+      threshold_step <- input$persistence_threshold_step
+      if (is.null(threshold_step) || threshold_step <= 0) threshold_step <- 0.05
+      n_thresholds <- length(seq(0.1, 0.9, by = threshold_step))
+      n_persistence <- length(methods) * n_thresholds
+
       n_matrices <- n_weighted + n_percolation + n_persistence
     }
 
