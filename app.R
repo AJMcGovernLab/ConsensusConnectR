@@ -10000,21 +10000,32 @@ server <- function(input, output, session) {
             })
           }
 
-          # Persistence uses R (multi-threshold structure)
+          # Persistence networks: Use C++ parallel processing by flattening structure
           if(length(networks_g1$persistence) > 0 && length(networks_g2$persistence) > 0) {
-            setProgress(0.55, detail = "Processing persistence networks...")
-            for(i in seq_along(all_combos)) {
-              if(i %% 100 == 0) {
-                setProgress(0.55 + (i / length(all_combos)) * 0.25,
-                           detail = paste0("Persistence: ", i, "/", length(all_combos)))
+            setProgress(0.55, detail = "Processing persistence networks (C++ parallel)...")
+            tryCatch({
+              batch_result <- batch_persistence_complement_pairs(
+                networks_g1$persistence, networks_g2$persistence,
+                node_names, pairs$combos, pairs$complements
+              )
+              contrib_persistence[1:n_pairs] <- batch_result$contrib_combo
+              contrib_persistence[(n_pairs+1):(2*n_pairs)] <- batch_result$contrib_complement
+            }, error = function(e) {
+              message("[Elbow] C++ persistence complement pairs failed: ", e$message, " - using R fallback")
+              # Fallback to sequential R processing
+              for(i in seq_along(all_combos)) {
+                if(i %% 100 == 0) {
+                  setProgress(0.55 + (i / length(all_combos)) * 0.25,
+                             detail = paste0("Persistence (R): ", i, "/", length(all_combos)))
+                }
+                combo <- all_combos[[i]]
+                J_persistence <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence,
+                                                              exclude_nodes = combo)
+                if(!is.na(J_persistence) && !is.na(baseline_persistence)) {
+                  contrib_persistence[i] <- J_persistence - baseline_persistence
+                }
               }
-              combo <- all_combos[[i]]
-              J_persistence <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence,
-                                                            exclude_nodes = combo)
-              if(!is.na(J_persistence) && !is.na(baseline_persistence)) {
-                contrib_persistence[i] <- J_persistence - baseline_persistence
-              }
-            }
+            })
           }
 
         } else {
@@ -10081,14 +10092,24 @@ server <- function(input, output, session) {
             }
           }
 
-          # Persistence
-          if(length(networks_g1$persistence) > 0) {
-            setProgress(0.60, detail = "Processing persistence networks...")
-            for(i in seq_along(all_combos)) {
-              if(i %% 100 == 0) setProgress(0.60 + (i/length(all_combos))*0.2)
-              J <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence, exclude_nodes = all_combos[[i]])
-              if(!is.na(J) && !is.na(baseline_persistence)) contrib_persistence[i] <- J - baseline_persistence
-            }
+          # Persistence: Use C++ parallel processing by flattening structure
+          if(length(networks_g1$persistence) > 0 && length(networks_g2$persistence) > 0) {
+            setProgress(0.60, detail = "Processing persistence networks (C++ parallel)...")
+            tryCatch({
+              batch_result <- batch_persistence_contributions(
+                networks_g1$persistence, networks_g2$persistence,
+                node_names, all_combos
+              )
+              contrib_persistence <- batch_result$contribution
+            }, error = function(e) {
+              message("[Elbow] C++ persistence failed: ", e$message, " - using R fallback")
+              # Fallback to sequential R processing
+              for(i in seq_along(all_combos)) {
+                if(i %% 100 == 0) setProgress(0.60 + (i/length(all_combos))*0.2)
+                J <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence, exclude_nodes = all_combos[[i]])
+                if(!is.na(J) && !is.na(baseline_persistence)) contrib_persistence[i] <- J - baseline_persistence
+              }
+            })
           }
         }
 

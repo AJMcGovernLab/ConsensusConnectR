@@ -1219,6 +1219,139 @@ compute_averaged_jaccard_r <- function(matrices_g1, matrices_g2,
 }
 
 # =============================================================================
+# PERSISTENCE NETWORK PARALLEL PROCESSING
+# =============================================================================
+# Persistence networks have nested structure: persistence[[method]][[threshold]]
+# These functions flatten the structure for C++ batch processing.
+
+#' Flatten persistence networks for C++ parallel processing
+#'
+#' Converts nested persistence structure to flat matrix lists compatible with
+#' the C++ batch functions. Both groups are flattened in parallel to maintain
+#' correspondence.
+#'
+#' @param pers_g1 Persistence networks for group 1: pers_g1[[method]][[threshold]]
+#' @param pers_g2 Persistence networks for group 2: pers_g2[[method]][[threshold]]
+#' @return List with flat_g1, flat_g2 (flat matrix lists) and meta (method/threshold info)
+#' @keywords internal
+flatten_persistence_networks <- function(pers_g1, pers_g2) {
+  # Find common methods and thresholds
+  methods <- intersect(names(pers_g1), names(pers_g2))
+
+  if (length(methods) == 0) {
+    return(list(flat_g1 = list(), flat_g2 = list(), meta = list()))
+  }
+
+  flat_g1 <- list()
+  flat_g2 <- list()
+  meta <- list()
+  idx <- 0
+
+  for (method in methods) {
+    if (is.null(pers_g1[[method]]) || is.null(pers_g2[[method]])) next
+
+    thresholds <- intersect(names(pers_g1[[method]]), names(pers_g2[[method]]))
+
+    for (thresh in thresholds) {
+      mat1 <- pers_g1[[method]][[thresh]]
+      mat2 <- pers_g2[[method]][[thresh]]
+
+      if (is.null(mat1) || is.null(mat2)) next
+
+      idx <- idx + 1
+
+      # Ensure matrices are properly formatted for C++
+      if (!is.matrix(mat1)) mat1 <- as.matrix(mat1)
+      if (!is.matrix(mat2)) mat2 <- as.matrix(mat2)
+      storage.mode(mat1) <- "double"
+      storage.mode(mat2) <- "double"
+
+      flat_g1[[idx]] <- mat1
+      flat_g2[[idx]] <- mat2
+      meta[[idx]] <- list(method = method, threshold = thresh)
+    }
+  }
+
+  list(flat_g1 = flat_g1, flat_g2 = flat_g2, meta = meta, n_matrices = idx)
+}
+
+#' Batch compute Jaccard contributions for persistence networks
+#'
+#' Flattens persistence structure and uses C++ parallel processing.
+#' This replaces the sequential R loop in brute_force_discovery for persistence.
+#'
+#' @param pers_g1 Persistence networks for group 1
+#' @param pers_g2 Persistence networks for group 2
+#' @param node_names Character vector of node names
+#' @param candidates_list List of character vectors (nodes to exclude)
+#' @param n_threads Number of threads (0 = auto)
+#' @return Data frame with contributions for each candidate
+#' @export
+batch_persistence_contributions <- function(pers_g1, pers_g2, node_names,
+                                             candidates_list, n_threads = 0) {
+
+  # Flatten persistence structure
+  flat <- flatten_persistence_networks(pers_g1, pers_g2)
+
+  if (flat$n_matrices == 0) {
+    return(data.frame(
+      contribution = rep(NA_real_, length(candidates_list)),
+      baseline = NA_real_,
+      method = "no_data"
+    ))
+  }
+
+  # Use the existing batch_jaccard_contributions function on flattened matrices
+  return(batch_jaccard_contributions(
+    networks_g1 = flat$flat_g1,
+    networks_g2 = flat$flat_g2,
+    node_names = node_names,
+    candidates_list = candidates_list,
+    n_threads = n_threads
+  ))
+}
+
+#' Batch compute complement pair contributions for persistence networks
+#'
+#' Uses complement symmetry optimization with flattened persistence matrices.
+#'
+#' @param pers_g1 Persistence networks for group 1
+#' @param pers_g2 Persistence networks for group 2
+#' @param node_names Character vector of node names
+#' @param combos_list List of combo node names
+#' @param complements_list List of complement node names
+#' @param n_threads Number of threads (0 = auto)
+#' @return List with contrib_combo, contrib_complement, and baseline
+#' @export
+batch_persistence_complement_pairs <- function(pers_g1, pers_g2, node_names,
+                                                combos_list, complements_list,
+                                                n_threads = 0) {
+
+  # Flatten persistence structure
+  flat <- flatten_persistence_networks(pers_g1, pers_g2)
+
+  if (flat$n_matrices == 0) {
+    n_pairs <- length(combos_list)
+    return(list(
+      contrib_combo = rep(NA_real_, n_pairs),
+      contrib_complement = rep(NA_real_, n_pairs),
+      baseline = NA_real_,
+      method = "no_data"
+    ))
+  }
+
+  # Use the existing complement pairs function on flattened matrices
+  return(batch_jaccard_complement_pairs(
+    networks_g1 = flat$flat_g1,
+    networks_g2 = flat$flat_g2,
+    node_names = node_names,
+    combos_list = combos_list,
+    complements_list = complements_list,
+    n_threads = n_threads
+  ))
+}
+
+# =============================================================================
 # AUTO-INITIALIZATION MESSAGE
 # =============================================================================
 

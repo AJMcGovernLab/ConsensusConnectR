@@ -3930,21 +3930,33 @@ brute_force_discovery <- function(analysis_results,
       })
     }
 
-    # Persistence uses R (multi-threshold structure)
+    # Persistence networks: Use C++ parallel processing by flattening structure
     if(n_persistence > 0) {
-      if(verbose) message("[DEBUG brute_force] Processing persistence networks (R)...")
+      if(verbose) message("[DEBUG brute_force] Processing persistence networks (C++ parallel)...")
       if(!is.null(progress_callback)) progress_callback(0.28)
-      for(i in seq_along(all_combos)) {
-        if(i %% 100 == 0 && !is.null(progress_callback)) {
-          progress_callback(0.28 + (i / length(all_combos)) * 0.15)
+      tryCatch({
+        batch_result <- batch_persistence_complement_pairs(
+          networks_g1$persistence, networks_g2$persistence,
+          node_names, pairs$combos, pairs$complements
+        )
+        contrib_persistence[1:n_pairs] <- batch_result$contrib_combo
+        contrib_persistence[(n_pairs+1):(2*n_pairs)] <- batch_result$contrib_complement
+        if(verbose) message("[DEBUG brute_force] Persistence C++ complete, method: ", batch_result$method)
+      }, error = function(e) {
+        message("[DEBUG brute_force] C++ persistence failed: ", e$message, " - using R fallback")
+        # Fallback to sequential R processing
+        for(i in seq_along(all_combos)) {
+          if(i %% 100 == 0 && !is.null(progress_callback)) {
+            progress_callback(0.28 + (i / length(all_combos)) * 0.15)
+          }
+          combo <- all_combos[[i]]
+          J_persistence <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence,
+                                                        exclude_nodes = combo)
+          if(!is.na(J_persistence) && !is.na(baseline_persistence)) {
+            contrib_persistence[i] <- J_persistence - baseline_persistence
+          }
         }
-        combo <- all_combos[[i]]
-        J_persistence <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence,
-                                                      exclude_nodes = combo)
-        if(!is.na(J_persistence) && !is.na(baseline_persistence)) {
-          contrib_persistence[i] <- J_persistence - baseline_persistence
-        }
-      }
+      })
     }
 
   } else {
@@ -4028,17 +4040,28 @@ brute_force_discovery <- function(analysis_results,
       }
     }
 
-    # Persistence
+    # Persistence: Use C++ parallel processing by flattening structure
     if(n_persistence > 0) {
-      if(verbose) message("[DEBUG brute_force] Processing persistence networks (R)...")
+      if(verbose) message("[DEBUG brute_force] Processing persistence networks (C++ parallel)...")
       if(!is.null(progress_callback)) progress_callback(0.30)
-      for(i in seq_along(all_combos)) {
-        if(i %% 100 == 0 && !is.null(progress_callback)) {
-          progress_callback(0.30 + (i / length(all_combos)) * 0.15)
+      tryCatch({
+        batch_result <- batch_persistence_contributions(
+          networks_g1$persistence, networks_g2$persistence,
+          node_names, all_combos
+        )
+        contrib_persistence <- batch_result$contribution
+        if(verbose) message("[DEBUG brute_force] Persistence C++ complete")
+      }, error = function(e) {
+        message("[DEBUG brute_force] C++ persistence failed: ", e$message, " - using R fallback")
+        # Fallback to sequential R processing
+        for(i in seq_along(all_combos)) {
+          if(i %% 100 == 0 && !is.null(progress_callback)) {
+            progress_callback(0.30 + (i / length(all_combos)) * 0.15)
+          }
+          J <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence, exclude_nodes = all_combos[[i]])
+          if(!is.na(J) && !is.na(baseline_persistence)) contrib_persistence[i] <- J - baseline_persistence
         }
-        J <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence, exclude_nodes = all_combos[[i]])
-        if(!is.na(J) && !is.na(baseline_persistence)) contrib_persistence[i] <- J - baseline_persistence
-      }
+      })
     }
   }
 
