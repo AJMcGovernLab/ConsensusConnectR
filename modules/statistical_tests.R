@@ -1161,7 +1161,11 @@ test_hypothesis_combinations <- function(analysis_results,
 
   # Apply multiple comparison correction
   if(nrow(results) > 0 && correction_method != "none") {
-    results$P_Adjusted <- compute_multiple_comparison_correction(results$P_Value, correction_method)
+    if(correction_method == "fdr") {
+      results$P_Adjusted <- p.adjust(results$P_Value, method = "BH")
+    } else if(correction_method == "bonferroni") {
+      results$P_Adjusted <- p.adjust(results$P_Value, method = "bonferroni")
+    }
   } else {
     results$P_Adjusted <- results$P_Value
   }
@@ -1623,15 +1627,12 @@ compute_group_comparison_statistics <- function(results_group1,
 #' Applies FDR correction to multiple p-values
 #'
 #' @param p_values Vector of p-values
-#' @param method Correction method: "fdr" (default), "holm", or "bonferroni"
+#' @param method Correction method: "fdr" (default) or "bonferroni"
 #' @return Vector of adjusted p-values
 compute_multiple_comparison_correction <- function(p_values, method = "fdr") {
   if(method == "fdr") {
     # Benjamini-Hochberg FDR
     return(p.adjust(p_values, method = "BH"))
-  } else if(method == "holm") {
-    # Holm-Bonferroni step-down (less conservative than Bonferroni, still controls FWER)
-    return(p.adjust(p_values, method = "holm"))
   } else if(method == "bonferroni") {
     # Bonferroni correction
     return(p.adjust(p_values, method = "bonferroni"))
@@ -2799,8 +2800,10 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
       names(ci_upper_vals) <- regions
 
       # Apply correction
-      if(correction_method != "none") {
-        p_adjusted <- compute_multiple_comparison_correction(p_values, correction_method)
+      if(correction_method == "fdr") {
+        p_adjusted <- p.adjust(p_values, method = "BH")
+      } else if(correction_method == "bonferroni") {
+        p_adjusted <- p.adjust(p_values, method = "bonferroni")
       } else {
         p_adjusted <- p_values
       }
@@ -2923,8 +2926,10 @@ compute_multimethod_contribution_permutation_test <- function(analysis_results,
   }
 
   # Apply correction
-  if(correction_method != "none") {
-    p_adjusted <- compute_multiple_comparison_correction(p_values, correction_method)
+  if(correction_method == "fdr") {
+    p_adjusted <- p.adjust(p_values, method = "BH")
+  } else if(correction_method == "bonferroni") {
+    p_adjusted <- p.adjust(p_values, method = "bonferroni")
   } else {
     p_adjusted <- p_values  # No correction
   }
@@ -4242,7 +4247,7 @@ brute_force_discovery <- function(analysis_results,
 
   # Apply correction if method is not "none"
   if(correction_method != "none" && length(all_pvals) > 0) {
-    adjusted_pvals <- compute_multiple_comparison_correction(all_pvals, correction_method)
+    adjusted_pvals <- p.adjust(all_pvals, method = correction_method)
 
     # Split back to dissim and sim
     n_dissim <- if(nrow(top_dissim) > 0) nrow(top_dissim) else 0
