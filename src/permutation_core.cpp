@@ -1147,6 +1147,137 @@ Rcpp::List verify_numerical_equivalence(
 }
 
 // =============================================================================
+// BATCH JACCARD CONTRIBUTIONS (FOR ELBOW TEST - NO PERMUTATIONS)
+// =============================================================================
+// This function computes observed Jaccard contributions for many candidates
+// in parallel WITHOUT running permutation tests. Used for the elbow test
+// to quickly evaluate all combinations at each size.
+
+// [[Rcpp::export]]
+Rcpp::List batch_jaccard_contributions_cpp(
+    const Rcpp::List& matrices_g1,
+    const Rcpp::List& matrices_g2,
+    const Rcpp::List& candidates_list,
+    int n_threads = 0) {
+
+  int n_candidates = candidates_list.size();
+  int n_matrices = matrices_g1.size();
+
+  if (n_matrices == 0 || n_candidates == 0) {
+    return Rcpp::List::create(
+      Rcpp::Named("contributions") = Rcpp::NumericVector(0),
+      Rcpp::Named("baseline") = NA_REAL,
+      Rcpp::Named("n_candidates") = 0,
+      Rcpp::Named("n_threads") = 0
+    );
+  }
+
+  // CRITICAL: Pre-convert ALL Rcpp data to C++ structures BEFORE parallel region
+  // Rcpp objects are NOT thread-safe!
+
+  // Convert matrices
+  std::vector<arma::mat> arma_g1(n_matrices);
+  std::vector<arma::mat> arma_g2(n_matrices);
+  for (int i = 0; i < n_matrices; i++) {
+    arma_g1[i] = Rcpp::as<arma::mat>(matrices_g1[i]);
+    arma_g2[i] = Rcpp::as<arma::mat>(matrices_g2[i]);
+  }
+
+  // Convert all candidate exclude lists
+  std::vector<arma::uvec> all_excludes(n_candidates);
+  for (int c = 0; c < n_candidates; c++) {
+    all_excludes[c] = Rcpp::as<arma::uvec>(candidates_list[c]);
+  }
+
+  // Allocate results
+  std::vector<double> contributions(n_candidates);
+
+  // Determine threads
+  #ifdef _OPENMP
+  if (n_threads <= 0) {
+    n_threads = omp_get_max_threads();
+  } else {
+    omp_set_num_threads(n_threads);
+  }
+  #else
+  n_threads = 1;
+  #endif
+
+  // Precompute baseline Jaccard ONCE (no exclusions)
+  double precomputed_baseline = 0.0;
+  int baseline_valid_count = 0;
+  for (int m = 0; m < n_matrices; m++) {
+    double j = compute_jaccard_cpp(arma_g1[m], arma_g2[m]);
+    if (!ISNA(j)) {
+      precomputed_baseline += j;
+      baseline_valid_count++;
+    }
+  }
+  double avg_baseline = (baseline_valid_count > 0) ?
+    (precomputed_baseline / baseline_valid_count) : NA_REAL;
+
+  // Parallel computation of contributions for all candidates
+  #ifdef _OPENMP
+  #pragma omp parallel for num_threads(n_threads) schedule(dynamic, 16)
+  for (int c = 0; c < n_candidates; c++) {
+    // Compute observed contribution for this candidate
+    double sum_without = 0.0;
+    int valid_count = 0;
+    const bool has_exclusions = (all_excludes[c].n_elem > 0);
+
+    for (int m = 0; m < n_matrices; m++) {
+      double j_without;
+      if (has_exclusions) {
+        j_without = compute_jaccard_exclude_cpp(arma_g1[m], arma_g2[m], all_excludes[c]);
+      } else {
+        j_without = avg_baseline;  // No exclusion = baseline
+      }
+      if (!ISNA(j_without)) {
+        sum_without += j_without;
+        valid_count++;
+      }
+    }
+
+    // Contribution = J(without) - J(baseline)
+    // Negative = region contributes to SIMILARITY (removing decreases J)
+    // Positive = region contributes to DISSIMILARITY (removing increases J)
+    contributions[c] = (valid_count > 0) ?
+      ((sum_without / valid_count) - avg_baseline) : NA_REAL;
+  }
+  #else
+  // Serial fallback
+  for (int c = 0; c < n_candidates; c++) {
+    double sum_without = 0.0;
+    int valid_count = 0;
+    const bool has_exclusions = (all_excludes[c].n_elem > 0);
+
+    for (int m = 0; m < n_matrices; m++) {
+      double j_without;
+      if (has_exclusions) {
+        j_without = compute_jaccard_exclude_cpp(arma_g1[m], arma_g2[m], all_excludes[c]);
+      } else {
+        j_without = avg_baseline;
+      }
+      if (!ISNA(j_without)) {
+        sum_without += j_without;
+        valid_count++;
+      }
+    }
+
+    contributions[c] = (valid_count > 0) ?
+      ((sum_without / valid_count) - avg_baseline) : NA_REAL;
+  }
+  #endif
+
+  return Rcpp::List::create(
+    Rcpp::Named("contributions") = Rcpp::wrap(contributions),
+    Rcpp::Named("baseline") = avg_baseline,
+    Rcpp::Named("n_candidates") = n_candidates,
+    Rcpp::Named("n_threads") = n_threads
+  );
+}
+
+// =============================================================================
 // BENCHMARKING
 // =============================================================================
 

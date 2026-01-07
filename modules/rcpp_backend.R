@@ -880,6 +880,149 @@ quick_performance_test <- function(n_nodes = 30, n_matrices = 5, n_permutations 
 }
 
 # =============================================================================
+# BATCH JACCARD CONTRIBUTIONS (FOR ELBOW TEST - NO PERMUTATIONS)
+# =============================================================================
+# Computes Jaccard contributions for many combinations in parallel using C++.
+# This is much faster than the pure R version for the elbow test.
+
+#' Batch compute Jaccard contributions using C++ backend
+#'
+#' @param networks_g1 List of matrices for group 1 (named by method)
+#' @param networks_g2 List of matrices for group 2 (named by method)
+#' @param node_names Character vector of node names (determines index mapping)
+#' @param candidates_list List of character vectors, each containing node names to exclude
+#' @param n_threads Number of threads (0 = auto-detect)
+#' @return Data frame with contributions for each candidate
+batch_jaccard_contributions <- function(networks_g1, networks_g2, node_names,
+                                        candidates_list, n_threads = 0) {
+
+  n_candidates <- length(candidates_list)
+
+  # Use auto-detected thread count if n_threads is 0 or not specified
+  if (n_threads <= 0) {
+    n_threads <- CPP_OPENMP_THREADS
+  }
+
+  if (!CPP_BACKEND_AVAILABLE || n_candidates < 1) {
+    # Fallback to R implementation
+    warning("[batch_jaccard_contributions] C++ backend not available, using R fallback")
+    return(batch_jaccard_contributions_r_fallback(
+      networks_g1, networks_g2, node_names, candidates_list
+    ))
+  }
+
+  tryCatch({
+    # Convert ALL candidates to indices (0-based) upfront
+    candidates_indices <- lapply(candidates_list, function(regions) {
+      as.integer(which(node_names %in% regions) - 1L)
+    })
+
+    # Call C++ function
+    result <- batch_jaccard_contributions_cpp(
+      matrices_g1 = networks_g1,
+      matrices_g2 = networks_g2,
+      candidates_list = candidates_indices,
+      n_threads = as.integer(n_threads)
+    )
+
+    return(data.frame(
+      contribution = result$contributions,
+      baseline = result$baseline,
+      method = "cpp"
+    ))
+  }, error = function(e) {
+    warning("[batch_jaccard_contributions] C++ error: ", e$message, " - using R fallback")
+    return(batch_jaccard_contributions_r_fallback(
+      networks_g1, networks_g2, node_names, candidates_list
+    ))
+  })
+}
+
+#' R fallback for batch Jaccard contributions
+#' @keywords internal
+batch_jaccard_contributions_r_fallback <- function(networks_g1, networks_g2,
+                                                    node_names, candidates_list) {
+
+  n_candidates <- length(candidates_list)
+
+  # Compute baseline (no exclusions)
+  baseline <- compute_averaged_jaccard_r(networks_g1, networks_g2)
+
+  contributions <- numeric(n_candidates)
+
+  for (i in seq_len(n_candidates)) {
+    exclude_nodes <- candidates_list[[i]]
+    j_without <- compute_averaged_jaccard_r(networks_g1, networks_g2, exclude_nodes, node_names)
+    contributions[i] <- if (!is.na(j_without) && !is.na(baseline)) {
+      j_without - baseline
+    } else {
+      NA_real_
+    }
+  }
+
+  return(data.frame(
+    contribution = contributions,
+    baseline = baseline,
+    method = "r_fallback"
+  ))
+}
+
+#' Compute averaged Jaccard in R (helper for fallback)
+#' @keywords internal
+compute_averaged_jaccard_r <- function(matrices_g1, matrices_g2,
+                                        exclude_nodes = NULL, node_names = NULL) {
+
+  methods <- intersect(names(matrices_g1), names(matrices_g2))
+  if (length(methods) == 0) return(NA_real_)
+
+  jaccards <- c()
+
+  for (method in methods) {
+    mat1 <- matrices_g1[[method]]
+    mat2 <- matrices_g2[[method]]
+
+    if (is.null(mat1) || is.null(mat2)) next
+
+    # Apply node exclusion
+    if (!is.null(exclude_nodes) && length(exclude_nodes) > 0) {
+      if (is.null(node_names)) {
+        node_names <- rownames(mat1)
+        if (is.null(node_names)) node_names <- colnames(mat1)
+      }
+      if (!is.null(node_names)) {
+        keep_idx <- which(!(node_names %in% exclude_nodes))
+        if (length(keep_idx) >= 3) {
+          mat1 <- mat1[keep_idx, keep_idx, drop = FALSE]
+          mat2 <- mat2[keep_idx, keep_idx, drop = FALSE]
+        } else {
+          next
+        }
+      }
+    }
+
+    # Compute Jaccard
+    n <- nrow(mat1)
+    numerator <- 0
+    denominator <- 0
+
+    for (i in 1:(n-1)) {
+      for (j in (i+1):n) {
+        w1 <- abs(mat1[i, j])
+        w2 <- abs(mat2[i, j])
+        numerator <- numerator + min(w1, w2)
+        denominator <- denominator + max(w1, w2)
+      }
+    }
+
+    j <- if (denominator > 0) numerator / denominator else 0
+    jaccards <- c(jaccards, j)
+  }
+
+  if (length(jaccards) == 0) return(NA_real_)
+  return(mean(jaccards, na.rm = TRUE))
+}
+
+# =============================================================================
 # AUTO-INITIALIZATION MESSAGE
 # =============================================================================
 
