@@ -3859,8 +3859,6 @@ brute_force_discovery <- function(analysis_results,
 
   # ========== PHASE 1: Enumerate all combinations ==========
   if(verbose) message("[DEBUG brute_force] Starting PHASE 1: Enumerate all combinations")
-  all_combos_list <- list()
-  combo_id <- 0
 
   # Calculate total combinations for progress reporting
   total_combos <- sum(sapply(1:max_combo_size, function(k) choose(n_nodes, k)))
@@ -3870,63 +3868,149 @@ brute_force_discovery <- function(analysis_results,
     message("[DEBUG brute_force] Time: ", Sys.time())
   }
 
+  # Build list of all combinations with their sizes first
+  all_combos <- list()
+  combo_sizes <- integer(0)
+  combo_idx <- 0
+
   for(size in 1:max_combo_size) {
-    if(verbose) message("[DEBUG brute_force] Enumerating size ", size, " combinations...")
+    if(verbose) message("[DEBUG brute_force] Building size ", size, " combinations...")
     combos <- combn(node_names, size, simplify = FALSE)
-
     for(combo in combos) {
-      combo_id <- combo_id + 1
+      combo_idx <- combo_idx + 1
+      all_combos[[combo_idx]] <- combo
+      combo_sizes <- c(combo_sizes, size)
+    }
+  }
 
-      # Progress callback
-      if(!is.null(progress_callback)) {
-        progress_callback(combo_id / total_combos * 0.5)  # First 50% for enumeration
+  if(!is.null(progress_callback)) progress_callback(0.05)
+
+  # ========== C++ BATCH PROCESSING FOR ENUMERATION ==========
+  # Check if C++ batch function is available
+  use_cpp_batch <- exists("batch_jaccard_contributions", mode = "function") &&
+                   exists("CPP_BACKEND_AVAILABLE") && isTRUE(CPP_BACKEND_AVAILABLE)
+
+  if(verbose) {
+    if(use_cpp_batch) {
+      message("[DEBUG brute_force] Using C++ batch processing for enumeration")
+    } else {
+      message("[DEBUG brute_force] C++ batch not available, using R fallback for enumeration")
+    }
+  }
+
+  # Initialize contribution vectors
+  contrib_weighted <- rep(NA_real_, length(all_combos))
+  contrib_percolation <- rep(NA_real_, length(all_combos))
+  contrib_persistence <- rep(NA_real_, length(all_combos))
+
+  if(use_cpp_batch) {
+    # C++ batch processing for weighted networks
+    if(n_weighted > 0) {
+      if(verbose) message("[DEBUG brute_force] Processing weighted networks (C++ parallel)...")
+      if(!is.null(progress_callback)) progress_callback(0.10)
+      tryCatch({
+        batch_result <- batch_jaccard_contributions(
+          networks_g1$weighted, networks_g2$weighted,
+          node_names, all_combos
+        )
+        contrib_weighted <- batch_result$contribution
+        if(verbose) message("[DEBUG brute_force] Weighted C++ complete, method: ", batch_result$method[1])
+      }, error = function(e) {
+        message("[DEBUG brute_force] C++ weighted failed: ", e$message, " - using R fallback")
+      })
+    }
+
+    # C++ batch processing for percolation networks
+    if(n_percolation > 0) {
+      if(verbose) message("[DEBUG brute_force] Processing percolation networks (C++ parallel)...")
+      if(!is.null(progress_callback)) progress_callback(0.20)
+      tryCatch({
+        batch_result <- batch_jaccard_contributions(
+          networks_g1$percolation, networks_g2$percolation,
+          node_names, all_combos
+        )
+        contrib_percolation <- batch_result$contribution
+        if(verbose) message("[DEBUG brute_force] Percolation C++ complete, method: ", batch_result$method[1])
+      }, error = function(e) {
+        message("[DEBUG brute_force] C++ percolation failed: ", e$message, " - using R fallback")
+      })
+    }
+  } else {
+    # R fallback for weighted and percolation
+    if(verbose) message("[DEBUG brute_force] R fallback for weighted/percolation...")
+    for(i in seq_along(all_combos)) {
+      if(i %% 100 == 0 && !is.null(progress_callback)) {
+        progress_callback(0.05 + (i / length(all_combos)) * 0.25)
+      }
+      combo <- all_combos[[i]]
+
+      if(n_weighted > 0) {
+        J_weighted <- compute_approach_jaccard(networks_g1$weighted, networks_g2$weighted,
+                                                exclude_nodes = combo)
+        if(!is.na(J_weighted) && !is.na(baseline_weighted)) {
+          contrib_weighted[i] <- J_weighted - baseline_weighted
+        }
       }
 
-      # Compute Jaccard without these regions for EACH approach
-      J_weighted <- compute_approach_jaccard(networks_g1$weighted, networks_g2$weighted,
-                                              exclude_nodes = combo)
-      J_percolation <- compute_approach_jaccard(networks_g1$percolation, networks_g2$percolation,
-                                                 exclude_nodes = combo)
+      if(n_percolation > 0) {
+        J_percolation <- compute_approach_jaccard(networks_g1$percolation, networks_g2$percolation,
+                                                   exclude_nodes = combo)
+        if(!is.na(J_percolation) && !is.na(baseline_percolation)) {
+          contrib_percolation[i] <- J_percolation - baseline_percolation
+        }
+      }
+    }
+  }
+
+  # Persistence always uses R (multi-threshold structure not supported by C++ batch yet)
+  if(n_persistence > 0) {
+    if(verbose) message("[DEBUG brute_force] Processing persistence networks (R)...")
+    if(!is.null(progress_callback)) progress_callback(0.30)
+    for(i in seq_along(all_combos)) {
+      if(i %% 100 == 0 && !is.null(progress_callback)) {
+        progress_callback(0.30 + (i / length(all_combos)) * 0.15)
+      }
+      combo <- all_combos[[i]]
       J_persistence <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence,
                                                     exclude_nodes = combo)
-
-      # Compute contributions (J_without - baseline) for each approach
-      contrib_weighted <- if(!is.na(J_weighted) && !is.na(baseline_weighted)) {
-        J_weighted - baseline_weighted
-      } else { NA }
-
-      contrib_percolation <- if(!is.na(J_percolation) && !is.na(baseline_percolation)) {
-        J_percolation - baseline_percolation
-      } else { NA }
-
-      contrib_persistence <- if(!is.na(J_persistence) && !is.na(baseline_persistence)) {
-        J_persistence - baseline_persistence
-      } else { NA }
-
-      # Combined contribution (average across valid approaches)
-      valid_contribs <- c(contrib_weighted, contrib_percolation, contrib_persistence)
-      valid_contribs <- valid_contribs[!is.na(valid_contribs)]
-
-      if(length(valid_contribs) == 0) next
-
-      contrib_combined <- mean(valid_contribs)
-      direction <- ifelse(contrib_combined > 0, "dissimilarity", "similarity")
-
-      all_combos_list[[combo_id]] <- data.frame(
-        combo_id = combo_id,
-        nodes = paste(combo, collapse = ", "),
-        nodes_list = I(list(combo)),
-        size = length(combo),
-        # Approach-specific contributions
-        contrib_weighted = contrib_weighted,
-        contrib_percolation = contrib_percolation,
-        contrib_persistence = contrib_persistence,
-        # Combined
-        contribution = contrib_combined,
-        direction = direction,
-        stringsAsFactors = FALSE
-      )
+      if(!is.na(J_persistence) && !is.na(baseline_persistence)) {
+        contrib_persistence[i] <- J_persistence - baseline_persistence
+      }
     }
+  }
+
+  if(!is.null(progress_callback)) progress_callback(0.45)
+
+  # Build results data frame
+  if(verbose) message("[DEBUG brute_force] Building results data frame...")
+  all_combos_list <- vector("list", length(all_combos))
+
+  for(i in seq_along(all_combos)) {
+    combo <- all_combos[[i]]
+
+    # Combined contribution (average across valid approaches)
+    valid_contribs <- c(contrib_weighted[i], contrib_percolation[i], contrib_persistence[i])
+    valid_contribs <- valid_contribs[!is.na(valid_contribs)]
+
+    if(length(valid_contribs) == 0) next
+
+    contrib_combined <- mean(valid_contribs)
+    direction <- ifelse(contrib_combined > 0, "dissimilarity", "similarity")
+
+    all_combos_list[[i]] <- data.frame(
+      combo_id = i,
+      nodes = paste(combo, collapse = ", "),
+      nodes_list = I(list(combo)),
+      size = combo_sizes[i],
+      # Approach-specific contributions
+      contrib_weighted = contrib_weighted[i],
+      contrib_percolation = contrib_percolation[i],
+      contrib_persistence = contrib_persistence[i],
+      # Combined
+      contribution = contrib_combined,
+      direction = direction,
+      stringsAsFactors = FALSE
+    )
   }
 
   # Combine into single data frame
