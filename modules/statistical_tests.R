@@ -3868,113 +3868,176 @@ brute_force_discovery <- function(analysis_results,
     message("[DEBUG brute_force] Time: ", Sys.time())
   }
 
-  # Build list of all combinations with their sizes first
-  all_combos <- list()
-  combo_sizes <- integer(0)
-  combo_idx <- 0
+  # ========== USE COMPLEMENT SYMMETRY FOR EFFICIENT ENUMERATION ==========
+  # For n nodes, combo of size k and its complement (size n-k) are related.
+  # By enumerating only up to size n/2, we get both from a single C++ call.
+  use_complement_symmetry <- exists("generate_complement_pairs", mode = "function") &&
+                              exists("batch_jaccard_complement_pairs", mode = "function") &&
+                              exists("CPP_BACKEND_AVAILABLE") && isTRUE(CPP_BACKEND_AVAILABLE)
 
-  for(size in 1:max_combo_size) {
-    if(verbose) message("[DEBUG brute_force] Building size ", size, " combinations...")
-    combos <- combn(node_names, size, simplify = FALSE)
-    for(combo in combos) {
-      combo_idx <- combo_idx + 1
-      all_combos[[combo_idx]] <- combo
-      combo_sizes <- c(combo_sizes, size)
-    }
-  }
+  if(use_complement_symmetry && max_combo_size >= n_nodes - 1) {
+    # Full complement symmetry - enumerate only up to n/2
+    if(verbose) message("[DEBUG brute_force] Using complement symmetry optimization")
+    if(!is.null(progress_callback)) progress_callback(0.02)
 
-  if(!is.null(progress_callback)) progress_callback(0.05)
+    pairs <- generate_complement_pairs(node_names, max_combo_size)
+    n_pairs <- pairs$n_pairs
 
-  # ========== C++ BATCH PROCESSING FOR ENUMERATION ==========
-  # Check if C++ batch function is available
-  use_cpp_batch <- exists("batch_jaccard_contributions", mode = "function") &&
-                   exists("CPP_BACKEND_AVAILABLE") && isTRUE(CPP_BACKEND_AVAILABLE)
+    if(verbose) message("[DEBUG brute_force] Generated ", n_pairs, " complement pairs → ", n_pairs * 2, " contributions")
 
-  if(verbose) {
-    if(use_cpp_batch) {
-      message("[DEBUG brute_force] Using C++ batch processing for enumeration")
-    } else {
-      message("[DEBUG brute_force] C++ batch not available, using R fallback for enumeration")
-    }
-  }
+    # Combine combos and complements into all_combos
+    all_combos <- c(pairs$combos, pairs$complements)
+    combo_sizes <- c(pairs$combo_sizes, pairs$complement_sizes)
 
-  # Initialize contribution vectors
-  contrib_weighted <- rep(NA_real_, length(all_combos))
-  contrib_percolation <- rep(NA_real_, length(all_combos))
-  contrib_persistence <- rep(NA_real_, length(all_combos))
+    # Initialize contribution vectors
+    contrib_weighted <- rep(NA_real_, length(all_combos))
+    contrib_percolation <- rep(NA_real_, length(all_combos))
+    contrib_persistence <- rep(NA_real_, length(all_combos))
 
-  if(use_cpp_batch) {
-    # C++ batch processing for weighted networks
+    if(!is.null(progress_callback)) progress_callback(0.05)
+
+    # C++ batch processing for weighted networks (complement pairs)
     if(n_weighted > 0) {
-      if(verbose) message("[DEBUG brute_force] Processing weighted networks (C++ parallel)...")
-      if(!is.null(progress_callback)) progress_callback(0.10)
+      if(verbose) message("[DEBUG brute_force] Processing weighted networks (C++ complement pairs)...")
+      if(!is.null(progress_callback)) progress_callback(0.08)
       tryCatch({
-        batch_result <- batch_jaccard_contributions(
+        batch_result <- batch_jaccard_complement_pairs(
           networks_g1$weighted, networks_g2$weighted,
-          node_names, all_combos
+          node_names, pairs$combos, pairs$complements
         )
-        contrib_weighted <- batch_result$contribution
-        if(verbose) message("[DEBUG brute_force] Weighted C++ complete, method: ", batch_result$method[1])
+        contrib_weighted[1:n_pairs] <- batch_result$contrib_combo
+        contrib_weighted[(n_pairs+1):(2*n_pairs)] <- batch_result$contrib_complement
+        if(verbose) message("[DEBUG brute_force] Weighted C++ complete, method: ", batch_result$method)
       }, error = function(e) {
-        message("[DEBUG brute_force] C++ weighted failed: ", e$message, " - using R fallback")
+        message("[DEBUG brute_force] C++ weighted failed: ", e$message)
       })
     }
 
-    # C++ batch processing for percolation networks
+    # C++ batch processing for percolation networks (complement pairs)
     if(n_percolation > 0) {
-      if(verbose) message("[DEBUG brute_force] Processing percolation networks (C++ parallel)...")
-      if(!is.null(progress_callback)) progress_callback(0.20)
+      if(verbose) message("[DEBUG brute_force] Processing percolation networks (C++ complement pairs)...")
+      if(!is.null(progress_callback)) progress_callback(0.18)
       tryCatch({
-        batch_result <- batch_jaccard_contributions(
+        batch_result <- batch_jaccard_complement_pairs(
           networks_g1$percolation, networks_g2$percolation,
-          node_names, all_combos
+          node_names, pairs$combos, pairs$complements
         )
-        contrib_percolation <- batch_result$contribution
-        if(verbose) message("[DEBUG brute_force] Percolation C++ complete, method: ", batch_result$method[1])
+        contrib_percolation[1:n_pairs] <- batch_result$contrib_combo
+        contrib_percolation[(n_pairs+1):(2*n_pairs)] <- batch_result$contrib_complement
+        if(verbose) message("[DEBUG brute_force] Percolation C++ complete, method: ", batch_result$method)
       }, error = function(e) {
-        message("[DEBUG brute_force] C++ percolation failed: ", e$message, " - using R fallback")
+        message("[DEBUG brute_force] C++ percolation failed: ", e$message)
       })
     }
-  } else {
-    # R fallback for weighted and percolation
-    if(verbose) message("[DEBUG brute_force] R fallback for weighted/percolation...")
-    for(i in seq_along(all_combos)) {
-      if(i %% 100 == 0 && !is.null(progress_callback)) {
-        progress_callback(0.05 + (i / length(all_combos)) * 0.25)
-      }
-      combo <- all_combos[[i]]
 
-      if(n_weighted > 0) {
-        J_weighted <- compute_approach_jaccard(networks_g1$weighted, networks_g2$weighted,
-                                                exclude_nodes = combo)
-        if(!is.na(J_weighted) && !is.na(baseline_weighted)) {
-          contrib_weighted[i] <- J_weighted - baseline_weighted
+    # Persistence uses R (multi-threshold structure)
+    if(n_persistence > 0) {
+      if(verbose) message("[DEBUG brute_force] Processing persistence networks (R)...")
+      if(!is.null(progress_callback)) progress_callback(0.28)
+      for(i in seq_along(all_combos)) {
+        if(i %% 100 == 0 && !is.null(progress_callback)) {
+          progress_callback(0.28 + (i / length(all_combos)) * 0.15)
         }
+        combo <- all_combos[[i]]
+        J_persistence <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence,
+                                                      exclude_nodes = combo)
+        if(!is.na(J_persistence) && !is.na(baseline_persistence)) {
+          contrib_persistence[i] <- J_persistence - baseline_persistence
+        }
+      }
+    }
+
+  } else {
+    # Fallback: standard enumeration (when max_combo_size < n-1 or C++ not available)
+    if(verbose) message("[DEBUG brute_force] Using standard enumeration (no complement symmetry)")
+
+    # Pre-allocate vectors properly
+    all_combos <- vector("list", total_combos)
+    combo_sizes <- integer(total_combos)
+    combo_idx <- 0
+
+    for(size in 1:max_combo_size) {
+      if(verbose) message("[DEBUG brute_force] Building size ", size, " combinations...")
+      size_combos <- combn(node_names, size, simplify = FALSE)
+      for(combo in size_combos) {
+        combo_idx <- combo_idx + 1
+        all_combos[[combo_idx]] <- combo
+        combo_sizes[combo_idx] <- size
+      }
+    }
+
+    if(!is.null(progress_callback)) progress_callback(0.05)
+
+    # Check if C++ batch function is available
+    use_cpp_batch <- exists("batch_jaccard_contributions", mode = "function") &&
+                     exists("CPP_BACKEND_AVAILABLE") && isTRUE(CPP_BACKEND_AVAILABLE)
+
+    if(verbose) {
+      if(use_cpp_batch) {
+        message("[DEBUG brute_force] Using C++ batch processing for enumeration")
+      } else {
+        message("[DEBUG brute_force] C++ batch not available, using R fallback")
+      }
+    }
+
+    # Initialize contribution vectors
+    contrib_weighted <- rep(NA_real_, length(all_combos))
+    contrib_percolation <- rep(NA_real_, length(all_combos))
+    contrib_persistence <- rep(NA_real_, length(all_combos))
+
+    if(use_cpp_batch) {
+      if(n_weighted > 0) {
+        if(verbose) message("[DEBUG brute_force] Processing weighted networks (C++ parallel)...")
+        if(!is.null(progress_callback)) progress_callback(0.10)
+        tryCatch({
+          batch_result <- batch_jaccard_contributions(
+            networks_g1$weighted, networks_g2$weighted, node_names, all_combos
+          )
+          contrib_weighted <- batch_result$contribution
+          if(verbose) message("[DEBUG brute_force] Weighted C++ complete")
+        }, error = function(e) { message("[DEBUG brute_force] C++ weighted failed: ", e$message) })
       }
 
       if(n_percolation > 0) {
-        J_percolation <- compute_approach_jaccard(networks_g1$percolation, networks_g2$percolation,
-                                                   exclude_nodes = combo)
-        if(!is.na(J_percolation) && !is.na(baseline_percolation)) {
-          contrib_percolation[i] <- J_percolation - baseline_percolation
+        if(verbose) message("[DEBUG brute_force] Processing percolation networks (C++ parallel)...")
+        if(!is.null(progress_callback)) progress_callback(0.20)
+        tryCatch({
+          batch_result <- batch_jaccard_contributions(
+            networks_g1$percolation, networks_g2$percolation, node_names, all_combos
+          )
+          contrib_percolation <- batch_result$contribution
+          if(verbose) message("[DEBUG brute_force] Percolation C++ complete")
+        }, error = function(e) { message("[DEBUG brute_force] C++ percolation failed: ", e$message) })
+      }
+    } else {
+      # R fallback
+      if(verbose) message("[DEBUG brute_force] R fallback for weighted/percolation...")
+      for(i in seq_along(all_combos)) {
+        if(i %% 100 == 0 && !is.null(progress_callback)) {
+          progress_callback(0.05 + (i / length(all_combos)) * 0.25)
+        }
+        combo <- all_combos[[i]]
+        if(n_weighted > 0) {
+          J <- compute_approach_jaccard(networks_g1$weighted, networks_g2$weighted, exclude_nodes = combo)
+          if(!is.na(J) && !is.na(baseline_weighted)) contrib_weighted[i] <- J - baseline_weighted
+        }
+        if(n_percolation > 0) {
+          J <- compute_approach_jaccard(networks_g1$percolation, networks_g2$percolation, exclude_nodes = combo)
+          if(!is.na(J) && !is.na(baseline_percolation)) contrib_percolation[i] <- J - baseline_percolation
         }
       }
     }
-  }
 
-  # Persistence always uses R (multi-threshold structure not supported by C++ batch yet)
-  if(n_persistence > 0) {
-    if(verbose) message("[DEBUG brute_force] Processing persistence networks (R)...")
-    if(!is.null(progress_callback)) progress_callback(0.30)
-    for(i in seq_along(all_combos)) {
-      if(i %% 100 == 0 && !is.null(progress_callback)) {
-        progress_callback(0.30 + (i / length(all_combos)) * 0.15)
-      }
-      combo <- all_combos[[i]]
-      J_persistence <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence,
-                                                    exclude_nodes = combo)
-      if(!is.na(J_persistence) && !is.na(baseline_persistence)) {
-        contrib_persistence[i] <- J_persistence - baseline_persistence
+    # Persistence
+    if(n_persistence > 0) {
+      if(verbose) message("[DEBUG brute_force] Processing persistence networks (R)...")
+      if(!is.null(progress_callback)) progress_callback(0.30)
+      for(i in seq_along(all_combos)) {
+        if(i %% 100 == 0 && !is.null(progress_callback)) {
+          progress_callback(0.30 + (i / length(all_combos)) * 0.15)
+        }
+        J <- compute_persistence_jaccard(networks_g1$persistence, networks_g2$persistence, exclude_nodes = all_combos[[i]])
+        if(!is.na(J) && !is.na(baseline_persistence)) contrib_persistence[i] <- J - baseline_persistence
       }
     }
   }

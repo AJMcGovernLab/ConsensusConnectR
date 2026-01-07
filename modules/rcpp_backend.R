@@ -880,6 +880,202 @@ quick_performance_test <- function(n_nodes = 30, n_matrices = 5, n_permutations 
 }
 
 # =============================================================================
+# BATCH JACCARD WITH COMPLEMENT SYMMETRY (OPTIMIZED)
+# =============================================================================
+# Exploits complement relationship: combo of size k and its complement (size n-k)
+# are computed together, halving the enumeration overhead.
+
+#' Batch compute Jaccard contributions for complement pairs
+#'
+#' For each combo, computes contributions for BOTH the combo AND its complement.
+#' This halves enumeration overhead when testing all combination sizes.
+#'
+#' @param networks_g1 List of matrices for group 1
+#' @param networks_g2 List of matrices for group 2
+#' @param node_names Character vector of all node names
+#' @param combos_list List of combo node names (size <= n/2)
+#' @param complements_list List of complement node names (size >= n/2)
+#' @param n_threads Number of threads (0 = auto-detect)
+#' @return List with contrib_combo, contrib_complement, and baseline
+batch_jaccard_complement_pairs <- function(networks_g1, networks_g2, node_names,
+                                            combos_list, complements_list,
+                                            n_threads = 0) {
+
+  n_pairs <- length(combos_list)
+
+  if (n_threads <= 0) {
+    n_threads <- CPP_OPENMP_THREADS
+  }
+
+  if (!CPP_BACKEND_AVAILABLE || n_pairs < 1) {
+    warning("[batch_jaccard_complement_pairs] C++ backend not available, using R fallback")
+    return(batch_jaccard_complement_pairs_r_fallback(
+      networks_g1, networks_g2, node_names, combos_list, complements_list
+    ))
+  }
+
+  tryCatch({
+    # Convert combos to 0-based indices
+    combos_indices <- lapply(combos_list, function(regions) {
+      as.integer(which(node_names %in% regions) - 1L)
+    })
+
+    # Convert complements to 0-based indices
+    complements_indices <- lapply(complements_list, function(regions) {
+      as.integer(which(node_names %in% regions) - 1L)
+    })
+
+    # Call C++ function
+    result <- batch_jaccard_complement_pairs_cpp(
+      matrices_g1 = networks_g1,
+      matrices_g2 = networks_g2,
+      combos_list = combos_indices,
+      complements_list = complements_indices,
+      n_threads = as.integer(n_threads)
+    )
+
+    return(list(
+      contrib_combo = result$contrib_combo,
+      contrib_complement = result$contrib_complement,
+      baseline = result$baseline,
+      method = "cpp"
+    ))
+  }, error = function(e) {
+    warning("[batch_jaccard_complement_pairs] C++ error: ", e$message, " - using R fallback")
+    return(batch_jaccard_complement_pairs_r_fallback(
+      networks_g1, networks_g2, node_names, combos_list, complements_list
+    ))
+  })
+}
+
+#' R fallback for complement pair Jaccard
+#' @keywords internal
+batch_jaccard_complement_pairs_r_fallback <- function(networks_g1, networks_g2,
+                                                       node_names, combos_list,
+                                                       complements_list) {
+
+  n_pairs <- length(combos_list)
+
+  # Compute baseline (no exclusions)
+  baseline <- compute_averaged_jaccard_r(networks_g1, networks_g2)
+
+  contrib_combo <- numeric(n_pairs)
+  contrib_complement <- numeric(n_pairs)
+
+  for (i in seq_len(n_pairs)) {
+    # J when excluding combo
+    j1 <- compute_averaged_jaccard_r(networks_g1, networks_g2, combos_list[[i]], node_names)
+    contrib_combo[i] <- if (!is.na(j1) && !is.na(baseline)) j1 - baseline else NA_real_
+
+    # J when excluding complement
+    j2 <- compute_averaged_jaccard_r(networks_g1, networks_g2, complements_list[[i]], node_names)
+    contrib_complement[i] <- if (!is.na(j2) && !is.na(baseline)) j2 - baseline else NA_real_
+  }
+
+  return(list(
+    contrib_combo = contrib_combo,
+    contrib_complement = contrib_complement,
+    baseline = baseline,
+    method = "r_fallback"
+  ))
+}
+
+#' Generate complement pairs for symmetric enumeration
+#'
+#' Given node names and max combo size, generates only combos up to size n/2
+#' along with their complements. This halves the total enumeration.
+#'
+#' @param node_names Character vector of all node names
+#' @param max_combo_size Maximum combo size to test (can be > n/2, complements handle the rest)
+#' @return List with combos, complements, combo_sizes, complement_sizes
+generate_complement_pairs <- function(node_names, max_combo_size) {
+  n_nodes <- length(node_names)
+  all_nodes_set <- node_names
+
+  # Only enumerate up to floor(n/2) - complements give us the rest
+  # But if max_combo_size is smaller, respect that limit
+  max_enumerate <- min(max_combo_size, floor((n_nodes - 1) / 2))
+
+  combos <- list()
+  complements <- list()
+  combo_sizes <- integer(0)
+  complement_sizes <- integer(0)
+
+  combo_idx <- 0
+
+  for (size in 1:max_enumerate) {
+    size_combos <- combn(node_names, size, simplify = FALSE)
+
+    for (combo in size_combos) {
+      combo_idx <- combo_idx + 1
+      complement <- setdiff(all_nodes_set, combo)
+
+      combos[[combo_idx]] <- combo
+      complements[[combo_idx]] <- complement
+      combo_sizes <- c(combo_sizes, size)
+      complement_sizes <- c(complement_sizes, n_nodes - size)
+    }
+  }
+
+  # Handle the middle size if n is odd and max allows it
+  # For size = ceil(n/2), each combo pairs with a DIFFERENT complement
+  middle_size <- ceiling((n_nodes - 1) / 2)
+  if (middle_size > max_enumerate && middle_size <= max_combo_size && middle_size < n_nodes) {
+    # Need to enumerate middle size, but avoid duplicates
+    # Each combo of size middle_size has complement of size (n - middle_size)
+    # If n is even and middle_size = n/2, complement is also n/2
+    # We need to only count each pair once
+
+    size_combos <- combn(node_names, middle_size, simplify = FALSE)
+
+    if (n_nodes - middle_size == middle_size) {
+      # Self-complementary size - need to avoid double counting
+      # Only include combo if it's "canonical" (e.g., first element is smaller than first element of complement)
+      seen_pairs <- list()
+
+      for (combo in size_combos) {
+        complement <- setdiff(all_nodes_set, combo)
+
+        # Create canonical key (sorted first elements comparison)
+        combo_key <- paste(sort(combo), collapse = ",")
+        complement_key <- paste(sort(complement), collapse = ",")
+
+        # Only include if this pair hasn't been seen
+        pair_key <- paste(sort(c(combo_key, complement_key)), collapse = "|")
+
+        if (!pair_key %in% names(seen_pairs)) {
+          seen_pairs[[pair_key]] <- TRUE
+          combo_idx <- combo_idx + 1
+          combos[[combo_idx]] <- combo
+          complements[[combo_idx]] <- complement
+          combo_sizes <- c(combo_sizes, middle_size)
+          complement_sizes <- c(complement_sizes, n_nodes - middle_size)
+        }
+      }
+    } else {
+      # Non-self-complementary - include all
+      for (combo in size_combos) {
+        combo_idx <- combo_idx + 1
+        complement <- setdiff(all_nodes_set, combo)
+        combos[[combo_idx]] <- combo
+        complements[[combo_idx]] <- complement
+        combo_sizes <- c(combo_sizes, middle_size)
+        complement_sizes <- c(complement_sizes, n_nodes - middle_size)
+      }
+    }
+  }
+
+  # Pre-allocate vectors properly (fix the O(n^2) issue)
+  list(
+    combos = combos,
+    complements = complements,
+    combo_sizes = combo_sizes,
+    complement_sizes = complement_sizes,
+    n_pairs = length(combos)
+  )
+}
+
+# =============================================================================
 # BATCH JACCARD CONTRIBUTIONS (FOR ELBOW TEST - NO PERMUTATIONS)
 # =============================================================================
 # Computes Jaccard contributions for many combinations in parallel using C++.

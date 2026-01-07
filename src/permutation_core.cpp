@@ -1147,6 +1147,152 @@ Rcpp::List verify_numerical_equivalence(
 }
 
 // =============================================================================
+// BATCH JACCARD WITH COMPLEMENT SYMMETRY (OPTIMIZED)
+// =============================================================================
+// Exploits the complement relationship: for n nodes, testing combo of size k
+// and its complement (size n-k) together saves enumeration overhead.
+// For each combo, we compute BOTH J(exclude=combo) AND J(exclude=complement).
+
+// [[Rcpp::export]]
+Rcpp::List batch_jaccard_complement_pairs_cpp(
+    const Rcpp::List& matrices_g1,
+    const Rcpp::List& matrices_g2,
+    const Rcpp::List& combos_list,       // List of combos (size <= n/2)
+    const Rcpp::List& complements_list,  // List of complements (size >= n/2)
+    int n_threads = 0) {
+
+  int n_pairs = combos_list.size();
+  int n_matrices = matrices_g1.size();
+
+  if (n_matrices == 0 || n_pairs == 0) {
+    return Rcpp::List::create(
+      Rcpp::Named("contrib_combo") = Rcpp::NumericVector(0),
+      Rcpp::Named("contrib_complement") = Rcpp::NumericVector(0),
+      Rcpp::Named("baseline") = NA_REAL,
+      Rcpp::Named("n_pairs") = 0,
+      Rcpp::Named("n_threads") = 0
+    );
+  }
+
+  // CRITICAL: Pre-convert ALL Rcpp data to C++ structures BEFORE parallel region
+  std::vector<arma::mat> arma_g1(n_matrices);
+  std::vector<arma::mat> arma_g2(n_matrices);
+  for (int i = 0; i < n_matrices; i++) {
+    arma_g1[i] = Rcpp::as<arma::mat>(matrices_g1[i]);
+    arma_g2[i] = Rcpp::as<arma::mat>(matrices_g2[i]);
+  }
+
+  // Convert combo and complement lists
+  std::vector<arma::uvec> all_combos(n_pairs);
+  std::vector<arma::uvec> all_complements(n_pairs);
+  for (int c = 0; c < n_pairs; c++) {
+    all_combos[c] = Rcpp::as<arma::uvec>(combos_list[c]);
+    all_complements[c] = Rcpp::as<arma::uvec>(complements_list[c]);
+  }
+
+  // Allocate results for BOTH combo and complement
+  std::vector<double> contrib_combo(n_pairs);
+  std::vector<double> contrib_complement(n_pairs);
+
+  // Determine threads
+  #ifdef _OPENMP
+  if (n_threads <= 0) {
+    n_threads = omp_get_max_threads();
+  } else {
+    omp_set_num_threads(n_threads);
+  }
+  #else
+  n_threads = 1;
+  #endif
+
+  // Precompute baseline Jaccard ONCE (no exclusions)
+  double precomputed_baseline = 0.0;
+  int baseline_valid_count = 0;
+  for (int m = 0; m < n_matrices; m++) {
+    double j = compute_jaccard_cpp(arma_g1[m], arma_g2[m]);
+    if (!ISNA(j)) {
+      precomputed_baseline += j;
+      baseline_valid_count++;
+    }
+  }
+  double avg_baseline = (baseline_valid_count > 0) ?
+    (precomputed_baseline / baseline_valid_count) : NA_REAL;
+
+  // Parallel computation - each iteration computes BOTH combo and complement
+  #ifdef _OPENMP
+  #pragma omp parallel for num_threads(n_threads) schedule(dynamic, 16)
+  for (int c = 0; c < n_pairs; c++) {
+    // Compute J when excluding combo (result is J on complement nodes)
+    double sum_exclude_combo = 0.0;
+    int valid_combo = 0;
+
+    // Compute J when excluding complement (result is J on combo nodes)
+    double sum_exclude_complement = 0.0;
+    int valid_complement = 0;
+
+    for (int m = 0; m < n_matrices; m++) {
+      // J(exclude combo) = J computed on complement nodes
+      double j1 = compute_jaccard_exclude_cpp(arma_g1[m], arma_g2[m], all_combos[c]);
+      if (!ISNA(j1)) {
+        sum_exclude_combo += j1;
+        valid_combo++;
+      }
+
+      // J(exclude complement) = J computed on combo nodes
+      double j2 = compute_jaccard_exclude_cpp(arma_g1[m], arma_g2[m], all_complements[c]);
+      if (!ISNA(j2)) {
+        sum_exclude_complement += j2;
+        valid_complement++;
+      }
+    }
+
+    // Contribution for excluding combo
+    contrib_combo[c] = (valid_combo > 0) ?
+      ((sum_exclude_combo / valid_combo) - avg_baseline) : NA_REAL;
+
+    // Contribution for excluding complement
+    contrib_complement[c] = (valid_complement > 0) ?
+      ((sum_exclude_complement / valid_complement) - avg_baseline) : NA_REAL;
+  }
+  #else
+  // Serial fallback
+  for (int c = 0; c < n_pairs; c++) {
+    double sum_exclude_combo = 0.0;
+    int valid_combo = 0;
+    double sum_exclude_complement = 0.0;
+    int valid_complement = 0;
+
+    for (int m = 0; m < n_matrices; m++) {
+      double j1 = compute_jaccard_exclude_cpp(arma_g1[m], arma_g2[m], all_combos[c]);
+      if (!ISNA(j1)) {
+        sum_exclude_combo += j1;
+        valid_combo++;
+      }
+
+      double j2 = compute_jaccard_exclude_cpp(arma_g1[m], arma_g2[m], all_complements[c]);
+      if (!ISNA(j2)) {
+        sum_exclude_complement += j2;
+        valid_complement++;
+      }
+    }
+
+    contrib_combo[c] = (valid_combo > 0) ?
+      ((sum_exclude_combo / valid_combo) - avg_baseline) : NA_REAL;
+    contrib_complement[c] = (valid_complement > 0) ?
+      ((sum_exclude_complement / valid_complement) - avg_baseline) : NA_REAL;
+  }
+  #endif
+
+  return Rcpp::List::create(
+    Rcpp::Named("contrib_combo") = Rcpp::wrap(contrib_combo),
+    Rcpp::Named("contrib_complement") = Rcpp::wrap(contrib_complement),
+    Rcpp::Named("baseline") = avg_baseline,
+    Rcpp::Named("n_pairs") = n_pairs,
+    Rcpp::Named("n_threads") = n_threads
+  );
+}
+
+// =============================================================================
 // BATCH JACCARD CONTRIBUTIONS (FOR ELBOW TEST - NO PERMUTATIONS)
 // =============================================================================
 // This function computes observed Jaccard contributions for many candidates
