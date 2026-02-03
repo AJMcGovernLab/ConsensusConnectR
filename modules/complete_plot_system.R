@@ -414,7 +414,7 @@ complete_plot_system <- function(analysis_results, ui_state, output_dir, width =
     # New Comprehensive Consensus Plots (Summary Tab - Tab 7 in new structure)
     "63_Consensus_Node_Metrics" = list(
       condition = function() !is.null(analysis_results$comprehensive_consensus) && !is.null(analysis_results$method_percolation_results),
-      func = function() render_consensus_node_metrics_plot(analysis_results$comprehensive_consensus, analysis_results$method_percolation_results, ui_state$brain_areas, ui_state$area_colors, ui_state$group_colors)
+      func = function() render_consensus_node_metrics_plot(analysis_results$comprehensive_consensus, analysis_results$method_percolation_results, ui_state$brain_areas, ui_state$area_colors, ui_state$group_colors, label_all_nodes = TRUE)
     ),
 
     "64_Consensus_Regional" = list(

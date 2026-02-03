@@ -414,7 +414,8 @@ render_consensus_node_metrics_plot <- function(comprehensive_consensus,
                                                brain_areas = NULL,
                                                area_colors = NULL,
                                                group_colors = NULL,
-                                               selected_methods = NULL) {
+                                               selected_methods = NULL,
+                                               label_all_nodes = FALSE) {
 
   all_groups <- names(comprehensive_consensus)
   if(length(all_groups) == 0) {
@@ -534,10 +535,26 @@ render_consensus_node_metrics_plot <- function(comprehensive_consensus,
       top_nodes_idx <- which(strength_rank >= (max_s_rank - 15) | eigenvector_rank >= (max_e_rank - 15))
       top_nodes_idx <- top_nodes_idx[!is.na(strength_rank[top_nodes_idx]) & !is.na(eigenvector_rank[top_nodes_idx])]
 
-      for(i in top_nodes_idx) {
-        text(strength_rank[i], eigenvector_rank[i],
-             labels = all_nodes[i],
-             cex = 0.7, font = 2, col = "black")
+      if(label_all_nodes) {
+        # Label all valid nodes — top nodes bold, others regular with smaller text
+        valid_node_indices <- which(valid_idx)
+        n_valid <- length(valid_node_indices)
+        label_cex <- if(n_valid > 40) 0.45 else if(n_valid > 25) 0.55 else 0.65
+        for(i in valid_node_indices) {
+          is_top <- i %in% top_nodes_idx
+          text(strength_rank[i], eigenvector_rank[i],
+               labels = all_nodes[i],
+               cex = if(is_top) 0.7 else label_cex,
+               font = if(is_top) 2 else 1,
+               col = "black",
+               pos = 3, offset = 0.4)
+        }
+      } else {
+        for(i in top_nodes_idx) {
+          text(strength_rank[i], eigenvector_rank[i],
+               labels = all_nodes[i],
+               cex = 0.7, font = 2, col = "black")
+        }
       }
 
       spearman_rho <- cor(strength_rank[valid_idx], eigenvector_rank[valid_idx],

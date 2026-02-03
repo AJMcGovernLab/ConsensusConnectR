@@ -23,7 +23,8 @@ create_summary_plot_registry <- function(analysis_results, ui_state) {
           analysis_results$method_percolation_results,
           ui_state$brain_areas,
           ui_state$area_colors,
-          ui_state$group_colors
+          ui_state$group_colors,
+          label_all_nodes = TRUE
         )
       },
       default_title = "Consensus Node Metrics Across Methods"
@@ -2135,7 +2136,7 @@ downloads_server <- function(input, output, session, analysis_results, ui_state)
           # Consensus Node Metrics (Tab A)
           "01_Consensus_Node_Metrics" = list(
             condition = function() !is.null(analysis_results$comprehensive_consensus) && !is.null(analysis_results$method_percolation_results),
-            func = function() render_consensus_node_metrics_plot(analysis_results$comprehensive_consensus, analysis_results$method_percolation_results, ui_state$brain_areas, ui_state$area_colors, ui_state$group_colors)
+            func = function() render_consensus_node_metrics_plot(analysis_results$comprehensive_consensus, analysis_results$method_percolation_results, ui_state$brain_areas, ui_state$area_colors, ui_state$group_colors, label_all_nodes = TRUE)
           ),
 
           # Consensus Regional (Tab A)

@@ -4008,31 +4008,31 @@ server <- function(input, output, session) {
     
     for (area_name in names(default_brain_areas)) {
       area_regions <- default_brain_areas[[area_name]]
-      # Case-insensitive matching
+      # Case-insensitive matching (exact or prefix with dot suffix e.g. dDG.DCX matches dDG)
       matched <- c()
       for (region in area_regions) {
-        # Find case-insensitive matches
-        matches <- region_columns[tolower(region_columns) == tolower(region)]
-        matched <- c(matched, matches)
+        exact_matches <- region_columns[tolower(region_columns) == tolower(region)]
+        suffix_matches <- region_columns[grepl(paste0("^", tolower(region), "\\."), tolower(region_columns))]
+        matched <- c(matched, exact_matches, suffix_matches)
       }
       matched <- unique(matched)
-      
+
       if (length(matched) > 0) {
         matched_areas[[area_name]] <- matched
         unassigned_regions <- setdiff(unassigned_regions, matched)
       }
     }
-    
+
     # Always include unassigned regions in "Other" category
     if (length(unassigned_regions) > 0) {
       matched_areas[["Other"]] <- unassigned_regions
     }
-    
+
     # If no brain areas were matched at all, put everything in "All Regions"
     if (length(matched_areas) == 0 || (length(matched_areas) == 1 && "Other" %in% names(matched_areas))) {
       matched_areas <- list("All Regions" = region_columns)
     }
-    
+
     ui_state$brain_areas <- matched_areas
     # Set colors for matched areas
     ui_state$area_colors <- default_area_colors[names(matched_areas)]
@@ -4042,14 +4042,14 @@ server <- function(input, output, session) {
     if ("All Regions" %in% names(matched_areas)) {
       ui_state$area_colors["All Regions"] <- "#3498DB"
     }
-    
+
     # Set group colors
     groups <- unique(data$Group)
     group_palette <- c("#E74C3C", "#3498DB", "#2ECC71", "#F39C12", "#9B59B6")
     ui_state$group_colors <- setNames(group_palette[1:length(groups)], groups)
-        
+
     ui_state$data_configured <- TRUE
-    
+
     showNotification("✅ Data configured successfully!")
     
     # Automatically switch to brain areas tab after configuration
@@ -4360,31 +4360,31 @@ server <- function(input, output, session) {
     
     for (area_name in names(default_brain_areas)) {
       area_regions <- default_brain_areas[[area_name]]
-      # Case-insensitive matching
+      # Case-insensitive matching (exact or prefix with dot suffix e.g. dDG.DCX matches dDG)
       matched <- c()
       for (region in area_regions) {
-        # Find case-insensitive matches
-        matches <- region_columns[tolower(region_columns) == tolower(region)]
-        matched <- c(matched, matches)
+        exact_matches <- region_columns[tolower(region_columns) == tolower(region)]
+        suffix_matches <- region_columns[grepl(paste0("^", tolower(region), "\\."), tolower(region_columns))]
+        matched <- c(matched, exact_matches, suffix_matches)
       }
       matched <- unique(matched)
-      
+
       if (length(matched) > 0) {
         matched_areas[[area_name]] <- matched
         unassigned_regions <- setdiff(unassigned_regions, matched)
       }
     }
-    
+
     # Always include unassigned regions in "Other" category
     if (length(unassigned_regions) > 0) {
       matched_areas[["Other"]] <- unassigned_regions
     }
-    
+
     # If no brain areas were matched at all, put everything in "All Regions"
     if (length(matched_areas) == 0 || (length(matched_areas) == 1 && "Other" %in% names(matched_areas))) {
       matched_areas <- list("All Regions" = region_columns)
     }
-    
+
     ui_state$brain_areas <- matched_areas
     # Set colors for matched areas
     ui_state$area_colors <- default_area_colors[names(matched_areas)]
@@ -4394,7 +4394,7 @@ server <- function(input, output, session) {
     if ("All Regions" %in% names(matched_areas)) {
       ui_state$area_colors["All Regions"] <- "#3498DB"
     }
-    
+
     # Set group colors
     group_palette <- c("#E74C3C", "#3498DB", "#2ECC71", "#F39C12", "#9B59B6")
     ui_state$group_colors <- setNames(group_palette[1:length(groups)], groups)
@@ -4905,6 +4905,13 @@ server <- function(input, output, session) {
         }, error = function(e) {
           cat(sprintf("⚠️  Warning: Consensus failed for %s: %s\n", group_name, e$message))
         })
+      }
+
+      # Reorder consensus groups to match user's selected_groups order
+      if (!is.null(input$selected_groups)) {
+        group_order <- intersect(input$selected_groups, names(comprehensive_consensus))
+        remaining <- setdiff(names(comprehensive_consensus), group_order)
+        comprehensive_consensus <- comprehensive_consensus[c(group_order, remaining)]
       }
 
       analysis_results$comprehensive_consensus <- comprehensive_consensus
