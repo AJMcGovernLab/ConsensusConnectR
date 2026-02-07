@@ -7552,12 +7552,18 @@ server <- function(input, output, session) {
       # Add diagonal reference line (perfect rank agreement)
       abline(a = 0, b = 1, col = "red", lty = 2, lwd = 1.5)
 
-      # Add node labels for ALL nodes with slight offset to avoid overlap
-      for(i in seq_len(nrow(group_data))) {
+      # Add node labels for ALL nodes with smart positioning to reduce overlap
+      n_nodes <- nrow(group_data)
+      label_cex <- if(n_nodes > 20) 0.5 else if(n_nodes > 15) 0.55 else 0.6
+      positions <- rep(c(3, 1, 4, 2), length.out = n_nodes)
+      order_idx <- order(strength_rank + eigenvector_rank)
+      positions[order_idx] <- rep(c(3, 1, 4, 2), length.out = n_nodes)
+
+      for(i in seq_len(n_nodes)) {
         text(strength_rank[i], eigenvector_rank[i],
              labels = group_data$Node[i],
-             cex = 0.6, font = 2, col = "black",
-             pos = 3, offset = 0.4)
+             cex = label_cex, font = 2, col = "black",
+             pos = positions[i], offset = 0.3)
       }
 
       # Add Spearman correlation (rank correlation)
@@ -8442,11 +8448,19 @@ server <- function(input, output, session) {
         abline(a = 0, b = 1, col = "red", lty = 2, lwd = 1.5)
         grid(col = "lightgray", lty = "dotted", lwd = 0.5)
 
-        # Label ALL nodes with offset positioning
-        for (i in 1:nrow(consensus_df)) {
+        # Label ALL nodes with smart positioning to reduce overlap
+        n_nodes <- nrow(consensus_df)
+        label_cex <- if(n_nodes > 20) 0.5 else if(n_nodes > 15) 0.55 else 0.6
+        # Alternate positions: 1=below, 2=left, 3=above, 4=right
+        positions <- rep(c(3, 1, 4, 2), length.out = n_nodes)
+        # Sort by x+y to spread out position assignments
+        order_idx <- order(consensus_df$Consensus_NodeStrength + consensus_df$Consensus_Eigenvector)
+        positions[order_idx] <- rep(c(3, 1, 4, 2), length.out = n_nodes)
+
+        for (i in 1:n_nodes) {
           text(consensus_df$Consensus_NodeStrength[i], consensus_df$Consensus_Eigenvector[i],
-               labels = consensus_df$Node[i], cex = 0.6, font = 2, col = "black",
-               pos = 3, offset = 0.4)
+               labels = consensus_df$Node[i], cex = label_cex, font = 2, col = "black",
+               pos = positions[i], offset = 0.3)
         }
 
         spearman_rho <- cor(consensus_df$Consensus_NodeStrength, consensus_df$Consensus_Eigenvector,
@@ -8529,11 +8543,17 @@ server <- function(input, output, session) {
         abline(a = 0, b = 1, col = "red", lty = 2, lwd = 1.5)
         grid(col = "lightgray", lty = "dotted", lwd = 0.5)
 
-        # Label ALL nodes with offset positioning
-        for (i in 1:nrow(consensus_df)) {
+        # Label ALL nodes with smart positioning to reduce overlap
+        n_nodes <- nrow(consensus_df)
+        label_cex <- if(n_nodes > 20) 0.5 else if(n_nodes > 15) 0.55 else 0.6
+        positions <- rep(c(3, 1, 4, 2), length.out = n_nodes)
+        order_idx <- order(consensus_df$Avg_Strength_Rank + consensus_df$Avg_Eigen_Rank)
+        positions[order_idx] <- rep(c(3, 1, 4, 2), length.out = n_nodes)
+
+        for (i in 1:n_nodes) {
           text(consensus_df$Avg_Strength_Rank[i], consensus_df$Avg_Eigen_Rank[i],
-               labels = consensus_df$Node[i], cex = 0.6, font = 2, col = "black",
-               pos = 3, offset = 0.4)
+               labels = consensus_df$Node[i], cex = label_cex, font = 2, col = "black",
+               pos = positions[i], offset = 0.3)
         }
 
         spearman_rho <- cor(consensus_df$Avg_Strength_Rank, consensus_df$Avg_Eigen_Rank,
