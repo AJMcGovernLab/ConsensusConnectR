@@ -1023,6 +1023,12 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
                    labels = consensus_df$Node[i], cex = label_cex, font = 2, col = "black",
                    pos = positions[i], offset = 0.3)
             }
+
+            # Add Spearman correlation (matching in-app display)
+            spearman_rho <- cor(consensus_df$Consensus_NodeStrength, consensus_df$Consensus_Eigenvector,
+                               method = "spearman", use = "complete.obs")
+            legend("bottomright", legend = paste("Spearman ρ =", round(spearman_rho, 3)),
+                   bty = "n", cex = 0.9)
           }, error = function(e) {
             plot(1, type = "n", axes = FALSE, main = group)
             text(1, 1, paste("Error:", substr(e$message, 1, 30)), cex = 0.8)
