@@ -7508,59 +7508,123 @@ server <- function(input, output, session) {
                       }
                     }
 
-                    # Create Cytoscape.js compatible JSON format
-                    # Nodes: each node is { data: { id: ..., ... } }
-                    cytoscape_nodes <- lapply(seq_len(nrow(nodes_df)), function(i) {
-                      node_data <- as.list(nodes_df[i, , drop = FALSE])
-                      node_data$id <- nodes_df$name[i]
-                      # Add size based on consensus eigenvector (scaled for Cytoscape)
-                      if(!is.null(nodes_df$consensus_eigenvector[i]) && !is.na(nodes_df$consensus_eigenvector[i])) {
-                        node_data$size <- 20 + (nodes_df$consensus_eigenvector[i] * 40)
-                      } else {
-                        node_data$size <- 30
-                      }
-                      list(data = node_data)
-                    })
+                    # =========================================================
+                    # EXPORT 1: GraphML Format (recommended for Cytoscape Desktop)
+                    # =========================================================
+                    graphml_path <- file.path(networks_dir, paste0("Network_", method, "_", gsub(" ", "_", group), ".graphml"))
 
-                    # Edges: each edge is { data: { id: ..., source: ..., target: ..., ... } }
-                    cytoscape_edges <- lapply(seq_len(nrow(edges_df)), function(i) {
-                      edge_data <- as.list(edges_df[i, , drop = FALSE])
-                      edge_data$id <- paste0("e", i)
-                      edge_data$source <- edges_df$from[i]
-                      edge_data$target <- edges_df$to[i]
-                      # Add weight if available
-                      if("weight" %in% colnames(edges_df)) {
-                        edge_data$weight <- edges_df$weight[i]
-                      }
-                      list(data = edge_data)
-                    })
-
-                    # Create Cytoscape.js compatible structure
-                    network_json <- list(
-                      format_version = "1.0",
-                      generated_by = "ConsensusConnectR",
-                      target_cytoscapejs_version = "~3.0",
-                      data = list(
-                        name = paste(method, "-", group),
-                        correlation_method = method,
-                        group = group,
-                        n_nodes = nrow(nodes_df),
-                        n_edges = nrow(edges_df),
-                        generated = as.character(Sys.time())
-                      ),
-                      elements = list(
-                        nodes = cytoscape_nodes,
-                        edges = cytoscape_edges
-                      )
+                    graphml_lines <- c(
+                      '<?xml version="1.0" encoding="UTF-8"?>',
+                      '<graphml xmlns="http://graphml.graphdrawing.org/xmlns"',
+                      '         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"',
+                      '         xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">',
+                      '  <!-- Node attributes -->',
+                      '  <key id="name" for="node" attr.name="name" attr.type="string"/>',
+                      '  <key id="brain_area" for="node" attr.name="brain_area" attr.type="string"/>',
+                      '  <key id="color" for="node" attr.name="color" attr.type="string"/>',
+                      '  <key id="eigenvector" for="node" attr.name="consensus_eigenvector" attr.type="double"/>',
+                      '  <key id="degree" for="node" attr.name="consensus_degree" attr.type="double"/>',
+                      '  <key id="betweenness" for="node" attr.name="consensus_betweenness" attr.type="double"/>',
+                      '  <!-- Edge attributes -->',
+                      '  <key id="weight" for="edge" attr.name="weight" attr.type="double"/>',
+                      paste0('  <graph id="', method, '_', gsub(" ", "_", group), '" edgedefault="undirected">')
                     )
 
-                    # Save as JSON
-                    json_path <- file.path(networks_dir, paste0("Network_", method, "_", gsub(" ", "_", group), ".json"))
-                    jsonlite::write_json(network_json, json_path, pretty = TRUE, auto_unbox = TRUE)
-                    saved_networks <- c(saved_networks, basename(json_path))
+                    # Add nodes
+                    for(i in seq_len(nrow(nodes_df))) {
+                      node_id <- gsub("[^a-zA-Z0-9_]", "_", nodes_df$name[i])
+                      node_lines <- c(
+                        paste0('    <node id="', node_id, '">'),
+                        paste0('      <data key="name">', nodes_df$name[i], '</data>'),
+                        paste0('      <data key="brain_area">', nodes_df$brain_area[i], '</data>'),
+                        paste0('      <data key="color">', nodes_df$color[i], '</data>')
+                      )
+                      if("consensus_eigenvector" %in% colnames(nodes_df) && !is.na(nodes_df$consensus_eigenvector[i])) {
+                        node_lines <- c(node_lines, paste0('      <data key="eigenvector">', round(nodes_df$consensus_eigenvector[i], 6), '</data>'))
+                      }
+                      if("consensus_degree" %in% colnames(nodes_df) && !is.na(nodes_df$consensus_degree[i])) {
+                        node_lines <- c(node_lines, paste0('      <data key="degree">', round(nodes_df$consensus_degree[i], 6), '</data>'))
+                      }
+                      if("consensus_betweenness" %in% colnames(nodes_df) && !is.na(nodes_df$consensus_betweenness[i])) {
+                        node_lines <- c(node_lines, paste0('      <data key="betweenness">', round(nodes_df$consensus_betweenness[i], 6), '</data>'))
+                      }
+                      node_lines <- c(node_lines, '    </node>')
+                      graphml_lines <- c(graphml_lines, node_lines)
+                    }
+
+                    # Add edges
+                    for(i in seq_len(nrow(edges_df))) {
+                      source_id <- gsub("[^a-zA-Z0-9_]", "_", edges_df$from[i])
+                      target_id <- gsub("[^a-zA-Z0-9_]", "_", edges_df$to[i])
+                      edge_lines <- paste0('    <edge id="e', i, '" source="', source_id, '" target="', target_id, '">')
+                      if("weight" %in% colnames(edges_df) && !is.na(edges_df$weight[i])) {
+                        edge_lines <- c(edge_lines, paste0('      <data key="weight">', round(edges_df$weight[i], 6), '</data>'))
+                      }
+                      edge_lines <- c(edge_lines, '    </edge>')
+                      graphml_lines <- c(graphml_lines, edge_lines)
+                    }
+
+                    graphml_lines <- c(graphml_lines, '  </graph>', '</graphml>')
+                    writeLines(graphml_lines, graphml_path)
+                    saved_networks <- c(saved_networks, basename(graphml_path))
+
+                    # =========================================================
+                    # EXPORT 2: SIF Format (Simple Interaction Format)
+                    # =========================================================
+                    sif_path <- file.path(networks_dir, paste0("Network_", method, "_", gsub(" ", "_", group), ".sif"))
+
+                    sif_lines <- character(0)
+                    for(i in seq_len(nrow(edges_df))) {
+                      # Format: source interaction_type target
+                      sif_lines <- c(sif_lines, paste(edges_df$from[i], "interacts", edges_df$to[i], sep = "\t"))
+                    }
+                    # Add isolated nodes (nodes with no edges)
+                    nodes_in_edges <- unique(c(edges_df$from, edges_df$to))
+                    isolated_nodes <- setdiff(nodes_df$name, nodes_in_edges)
+                    for(node in isolated_nodes) {
+                      sif_lines <- c(sif_lines, node)
+                    }
+                    writeLines(sif_lines, sif_path)
+                    saved_networks <- c(saved_networks, basename(sif_path))
+
+                    # =========================================================
+                    # EXPORT 3: Node Attributes file (for SIF import)
+                    # =========================================================
+                    node_attrs_path <- file.path(networks_dir, paste0("NodeAttributes_", method, "_", gsub(" ", "_", group), ".txt"))
+                    node_attrs <- data.frame(
+                      Node = nodes_df$name,
+                      brain_area = nodes_df$brain_area,
+                      color = nodes_df$color,
+                      stringsAsFactors = FALSE
+                    )
+                    if("consensus_eigenvector" %in% colnames(nodes_df)) {
+                      node_attrs$consensus_eigenvector <- nodes_df$consensus_eigenvector
+                    }
+                    if("consensus_degree" %in% colnames(nodes_df)) {
+                      node_attrs$consensus_degree <- nodes_df$consensus_degree
+                    }
+                    if("consensus_betweenness" %in% colnames(nodes_df)) {
+                      node_attrs$consensus_betweenness <- nodes_df$consensus_betweenness
+                    }
+                    write.table(node_attrs, node_attrs_path, sep = "\t", row.names = FALSE, quote = FALSE)
+                    saved_networks <- c(saved_networks, basename(node_attrs_path))
+
+                    # =========================================================
+                    # EXPORT 4: Edge Attributes file (for SIF import)
+                    # =========================================================
+                    if("weight" %in% colnames(edges_df)) {
+                      edge_attrs_path <- file.path(networks_dir, paste0("EdgeAttributes_", method, "_", gsub(" ", "_", group), ".txt"))
+                      edge_attrs <- data.frame(
+                        Edge = paste(edges_df$from, "(interacts)", edges_df$to, sep = " "),
+                        weight = edges_df$weight,
+                        stringsAsFactors = FALSE
+                      )
+                      write.table(edge_attrs, edge_attrs_path, sep = "\t", row.names = FALSE, quote = FALSE)
+                      saved_networks <- c(saved_networks, basename(edge_attrs_path))
+                    }
                   }
                 }, error = function(e) {
-                  cat(sprintf("Network JSON export error for %s/%s: %s\n", method, group, e$message))
+                  cat(sprintf("Network export error for %s/%s: %s\n", method, group, e$message))
                 })
               }
             }
@@ -7593,7 +7657,7 @@ server <- function(input, output, session) {
           if(length(saved_csvs) > 0) paste("   ", saved_csvs, collapse = "\n") else "    (none)",
           "",
           "Networks/",
-          "  JSON files containing network structure per correlation method:",
+          "  Network files in multiple formats for Cytoscape import:",
           if(length(saved_networks) > 0) paste("   ", saved_networks, collapse = "\n") else "    (none)",
           "",
           "=================================================================",
@@ -7619,21 +7683,33 @@ server <- function(input, output, session) {
           "  - CSV: Similarity matrix between groups",
           "",
           "=================================================================",
-          "NETWORK JSON FORMAT (Cytoscape.js Compatible)",
+          "NETWORK FILE FORMATS",
           "=================================================================",
           "",
-          "Each JSON file is in Cytoscape.js format for direct import:",
+          "For each correlation method and group, networks are exported in:",
           "",
-          "  data: network metadata (method, group, node/edge counts)",
-          "  elements:",
-          "    nodes: [ { data: { id, name, brain_area, color, size,",
-          "                       consensus_eigenvector, consensus_strength } } ]",
-          "    edges: [ { data: { id, source, target, weight } } ]",
+          "1. GraphML (.graphml) - RECOMMENDED FOR CYTOSCAPE DESKTOP",
+          "   - XML-based format with full node/edge attributes",
+          "   - Import: File > Import > Network from File > select .graphml",
+          "   - All attributes (brain_area, color, eigenvector, etc.) are preserved",
           "",
-          "To import in Cytoscape Desktop:",
-          "  1. File > Import > Network from File",
-          "  2. Select the JSON file",
-          "  3. Node size and color are pre-configured based on consensus metrics",
+          "2. SIF (.sif) - Simple Interaction Format",
+          "   - Plain text format: source <tab> interacts <tab> target",
+          "   - Import: File > Import > Network from File > select .sif",
+          "   - Load attributes separately using the .txt files below",
+          "",
+          "3. NodeAttributes (.txt) - Node attribute table",
+          "   - Tab-delimited file with node properties",
+          "   - Import after SIF: File > Import > Table from File",
+          "   - Select 'Node Table Columns' and match Node column to 'name'",
+          "",
+          "4. EdgeAttributes (.txt) - Edge attribute table (if weights exist)",
+          "   - Tab-delimited file with edge weights",
+          "   - Import: File > Import > Table from File",
+          "   - Select 'Edge Table Columns' and match Edge column",
+          "",
+          "QUICK START:",
+          "  Use the .graphml files - they contain everything in one file!",
           "",
           if(length(failed_plots) > 0) paste("\nNOTE: Some plots could not be generated:\n ", paste(failed_plots, collapse = "\n  ")) else ""
         ), readme_path)
