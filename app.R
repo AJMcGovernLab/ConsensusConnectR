@@ -7502,7 +7502,28 @@ server <- function(input, output, session) {
                       if(!is.null(consensus_df)) {
                         nodes_df$consensus_eigenvector <- consensus_df$Consensus_Eigenvector[match(nodes_df$name, consensus_df$Node)]
                         nodes_df$consensus_strength <- consensus_df$Consensus_NodeStrength[match(nodes_df$name, consensus_df$Node)]
+                        # Add other consensus metrics if available
+                        if("Consensus_Degree" %in% colnames(consensus_df)) {
+                          nodes_df$consensus_degree <- consensus_df$Consensus_Degree[match(nodes_df$name, consensus_df$Node)]
+                        }
+                        if("Consensus_Betweenness" %in% colnames(consensus_df)) {
+                          nodes_df$consensus_betweenness <- consensus_df$Consensus_Betweenness[match(nodes_df$name, consensus_df$Node)]
+                        }
+                        if("Consensus_Closeness" %in% colnames(consensus_df)) {
+                          nodes_df$consensus_closeness <- consensus_df$Consensus_Closeness[match(nodes_df$name, consensus_df$Node)]
+                        }
                       }
+                    }
+
+                    # Compute basic network metrics from this specific network
+                    nodes_df$degree <- igraph::degree(network)[match(nodes_df$name, igraph::V(network)$name)]
+                    nodes_df$strength <- igraph::strength(network)[match(nodes_df$name, igraph::V(network)$name)]
+                    if(igraph::ecount(network) > 0) {
+                      nodes_df$betweenness <- igraph::betweenness(network, normalized = TRUE)[match(nodes_df$name, igraph::V(network)$name)]
+                      nodes_df$closeness <- tryCatch(
+                        igraph::closeness(network, normalized = TRUE)[match(nodes_df$name, igraph::V(network)$name)],
+                        error = function(e) rep(NA, nrow(nodes_df))
+                      )
                     }
 
                     # Get node colors from brain area
@@ -7530,16 +7551,24 @@ server <- function(input, output, session) {
                       '  <key id="name" for="node" attr.name="name" attr.type="string"/>',
                       '  <key id="brain_area" for="node" attr.name="brain_area" attr.type="string"/>',
                       '  <key id="color" for="node" attr.name="color" attr.type="string"/>',
-                      '  <key id="eigenvector" for="node" attr.name="consensus_eigenvector" attr.type="double"/>',
-                      '  <key id="degree" for="node" attr.name="consensus_degree" attr.type="double"/>',
-                      '  <key id="betweenness" for="node" attr.name="consensus_betweenness" attr.type="double"/>',
+                      '  <!-- Network metrics for this specific method -->',
+                      '  <key id="degree" for="node" attr.name="degree" attr.type="int"/>',
+                      '  <key id="strength" for="node" attr.name="strength" attr.type="double"/>',
+                      '  <key id="betweenness" for="node" attr.name="betweenness" attr.type="double"/>',
+                      '  <key id="closeness" for="node" attr.name="closeness" attr.type="double"/>',
+                      '  <!-- Consensus metrics (averaged across methods) -->',
+                      '  <key id="consensus_eigenvector" for="node" attr.name="consensus_eigenvector" attr.type="double"/>',
+                      '  <key id="consensus_strength" for="node" attr.name="consensus_strength" attr.type="double"/>',
+                      '  <key id="consensus_degree" for="node" attr.name="consensus_degree" attr.type="double"/>',
+                      '  <key id="consensus_betweenness" for="node" attr.name="consensus_betweenness" attr.type="double"/>',
+                      '  <key id="consensus_closeness" for="node" attr.name="consensus_closeness" attr.type="double"/>',
                       '  <!-- Edge attributes -->',
                       '  <key id="weight" for="edge" attr.name="weight" attr.type="double"/>',
                       '  <key id="abs_weight" for="edge" attr.name="abs_weight" attr.type="double"/>',
                       paste0('  <graph id="', method, '_', gsub(" ", "_", group), '" edgedefault="undirected">')
                     )
 
-                    # Add nodes
+                    # Add nodes with all available metrics
                     for(i in seq_len(nrow(nodes_df))) {
                       node_id <- gsub("[^a-zA-Z0-9_]", "_", nodes_df$name[i])
                       node_lines <- c(
@@ -7548,14 +7577,34 @@ server <- function(input, output, session) {
                         paste0('      <data key="brain_area">', nodes_df$brain_area[i], '</data>'),
                         paste0('      <data key="color">', nodes_df$color[i], '</data>')
                       )
+                      # Network metrics for this specific method
+                      if("degree" %in% colnames(nodes_df) && !is.na(nodes_df$degree[i])) {
+                        node_lines <- c(node_lines, paste0('      <data key="degree">', nodes_df$degree[i], '</data>'))
+                      }
+                      if("strength" %in% colnames(nodes_df) && !is.na(nodes_df$strength[i])) {
+                        node_lines <- c(node_lines, paste0('      <data key="strength">', round(nodes_df$strength[i], 6), '</data>'))
+                      }
+                      if("betweenness" %in% colnames(nodes_df) && !is.na(nodes_df$betweenness[i])) {
+                        node_lines <- c(node_lines, paste0('      <data key="betweenness">', round(nodes_df$betweenness[i], 6), '</data>'))
+                      }
+                      if("closeness" %in% colnames(nodes_df) && !is.na(nodes_df$closeness[i])) {
+                        node_lines <- c(node_lines, paste0('      <data key="closeness">', round(nodes_df$closeness[i], 6), '</data>'))
+                      }
+                      # Consensus metrics (averaged across all methods)
                       if("consensus_eigenvector" %in% colnames(nodes_df) && !is.na(nodes_df$consensus_eigenvector[i])) {
-                        node_lines <- c(node_lines, paste0('      <data key="eigenvector">', round(nodes_df$consensus_eigenvector[i], 6), '</data>'))
+                        node_lines <- c(node_lines, paste0('      <data key="consensus_eigenvector">', round(nodes_df$consensus_eigenvector[i], 6), '</data>'))
+                      }
+                      if("consensus_strength" %in% colnames(nodes_df) && !is.na(nodes_df$consensus_strength[i])) {
+                        node_lines <- c(node_lines, paste0('      <data key="consensus_strength">', round(nodes_df$consensus_strength[i], 6), '</data>'))
                       }
                       if("consensus_degree" %in% colnames(nodes_df) && !is.na(nodes_df$consensus_degree[i])) {
-                        node_lines <- c(node_lines, paste0('      <data key="degree">', round(nodes_df$consensus_degree[i], 6), '</data>'))
+                        node_lines <- c(node_lines, paste0('      <data key="consensus_degree">', round(nodes_df$consensus_degree[i], 6), '</data>'))
                       }
                       if("consensus_betweenness" %in% colnames(nodes_df) && !is.na(nodes_df$consensus_betweenness[i])) {
-                        node_lines <- c(node_lines, paste0('      <data key="betweenness">', round(nodes_df$consensus_betweenness[i], 6), '</data>'))
+                        node_lines <- c(node_lines, paste0('      <data key="consensus_betweenness">', round(nodes_df$consensus_betweenness[i], 6), '</data>'))
+                      }
+                      if("consensus_closeness" %in% colnames(nodes_df) && !is.na(nodes_df$consensus_closeness[i])) {
+                        node_lines <- c(node_lines, paste0('      <data key="consensus_closeness">', round(nodes_df$consensus_closeness[i], 6), '</data>'))
                       }
                       node_lines <- c(node_lines, '    </node>')
                       graphml_lines <- c(graphml_lines, node_lines)
@@ -7607,15 +7656,17 @@ server <- function(input, output, session) {
                       color = nodes_df$color,
                       stringsAsFactors = FALSE
                     )
-                    if("consensus_eigenvector" %in% colnames(nodes_df)) {
-                      node_attrs$consensus_eigenvector <- nodes_df$consensus_eigenvector
-                    }
-                    if("consensus_degree" %in% colnames(nodes_df)) {
-                      node_attrs$consensus_degree <- nodes_df$consensus_degree
-                    }
-                    if("consensus_betweenness" %in% colnames(nodes_df)) {
-                      node_attrs$consensus_betweenness <- nodes_df$consensus_betweenness
-                    }
+                    # Add network metrics for this method
+                    if("degree" %in% colnames(nodes_df)) node_attrs$degree <- nodes_df$degree
+                    if("strength" %in% colnames(nodes_df)) node_attrs$strength <- nodes_df$strength
+                    if("betweenness" %in% colnames(nodes_df)) node_attrs$betweenness <- nodes_df$betweenness
+                    if("closeness" %in% colnames(nodes_df)) node_attrs$closeness <- nodes_df$closeness
+                    # Add consensus metrics
+                    if("consensus_eigenvector" %in% colnames(nodes_df)) node_attrs$consensus_eigenvector <- nodes_df$consensus_eigenvector
+                    if("consensus_strength" %in% colnames(nodes_df)) node_attrs$consensus_strength <- nodes_df$consensus_strength
+                    if("consensus_degree" %in% colnames(nodes_df)) node_attrs$consensus_degree <- nodes_df$consensus_degree
+                    if("consensus_betweenness" %in% colnames(nodes_df)) node_attrs$consensus_betweenness <- nodes_df$consensus_betweenness
+                    if("consensus_closeness" %in% colnames(nodes_df)) node_attrs$consensus_closeness <- nodes_df$consensus_closeness
                     write.table(node_attrs, node_attrs_path, sep = "\t", row.names = FALSE, quote = FALSE)
                     saved_networks <- c(saved_networks, basename(node_attrs_path))
 
