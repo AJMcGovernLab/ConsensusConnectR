@@ -1008,14 +1008,21 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
                  main = paste0("Rank-Based Consensus (", n_methods, " method-approach combos) - ", group),
                  xlim = c(0, 1.05), ylim = c(0, 1.05))
 
-            # Add node labels
-            top_nodes <- consensus_df[order(consensus_df$Consensus_Eigenvector, decreasing = TRUE)[1:min(10, nrow(consensus_df))], ]
-            if(nrow(top_nodes) > 0 && requireNamespace("ggrepel", quietly = TRUE)) {
-              text(top_nodes$Consensus_NodeStrength, top_nodes$Consensus_Eigenvector,
-                   labels = top_nodes$Node, pos = 3, cex = 0.7, font = 2, col = "black")
+            abline(a = 0, b = 1, col = "red", lty = 2, lwd = 1.5)
+            grid(col = "lightgray", lty = "dotted", lwd = 0.5)
+
+            # Label ALL nodes with smart positioning to reduce overlap
+            n_nodes <- nrow(consensus_df)
+            label_cex <- if(n_nodes > 20) 0.5 else if(n_nodes > 15) 0.55 else 0.6
+            positions <- rep(c(3, 1, 4, 2), length.out = n_nodes)
+            order_idx <- order(consensus_df$Consensus_NodeStrength + consensus_df$Consensus_Eigenvector)
+            positions[order_idx] <- rep(c(3, 1, 4, 2), length.out = n_nodes)
+
+            for(i in 1:n_nodes) {
+              text(consensus_df$Consensus_NodeStrength[i], consensus_df$Consensus_Eigenvector[i],
+                   labels = consensus_df$Node[i], cex = label_cex, font = 2, col = "black",
+                   pos = positions[i], offset = 0.3)
             }
-            grid(col = "gray90")
-            abline(0, 1, lty = 2, col = "gray70")
           }, error = function(e) {
             plot(1, type = "n", axes = FALSE, main = group)
             text(1, 1, paste("Error:", substr(e$message, 1, 30)), cex = 0.8)
@@ -1025,14 +1032,99 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
     ),
 
     "consensusNodeRanksPlot" = list(
-      condition = function() !is.null(analysis_results$comprehensive_consensus),
+      condition = function() !is.null(analysis_results$comprehensive_consensus) && !is.null(analysis_results$method_percolation_results),
       render = function() {
-        render_consensus_node_ranks_plot(
-          analysis_results$comprehensive_consensus,
-          ui_state$brain_areas,
-          ui_state$area_colors,
-          get_group_colors()
-        )
+        selected_methods <- input$selected_correlation_methods
+        all_groups <- names(analysis_results$comprehensive_consensus)
+        if(length(all_groups) == 0) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "No consensus data available", cex = 1.2, col = "gray")
+          return()
+        }
+
+        methods <- filter_common_methods(analysis_results$comprehensive_consensus, selected_methods)
+        if(length(methods) == 0) {
+          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+          text(1, 1, "No common methods across all groups", cex = 1.2, col = "gray")
+          return()
+        }
+
+        n_combos <- length(methods) * 3
+        n_groups <- length(all_groups)
+        par(mfrow = c(2, 2), mar = c(5, 5, 4, 2))
+
+        for(group in all_groups[1:min(4, n_groups)]) {
+          tryCatch({
+            consensus_df <- compute_comprehensive_rank_consensus(
+              group = group,
+              method_percolation_results = analysis_results$method_percolation_results,
+              method_weighted_results = analysis_results$method_weighted_results,
+              persistence_results = analysis_results$persistence_results,
+              methods = methods
+            )
+
+            if(is.null(consensus_df) || nrow(consensus_df) == 0) {
+              plot(1, type = "n", axes = FALSE, main = group)
+              text(1, 1, "No data available", cex = 1.0)
+              next
+            }
+
+            # Get colors by brain region
+            plot_colors <- rep("steelblue", nrow(consensus_df))
+            names(plot_colors) <- consensus_df$Node
+            if(!is.null(ui_state$brain_areas) && !is.null(ui_state$area_colors)) {
+              for(node in consensus_df$Node) {
+                for(area_name in names(ui_state$brain_areas)) {
+                  if(node %in% ui_state$brain_areas[[area_name]]) {
+                    if(area_name %in% names(ui_state$area_colors)) {
+                      plot_colors[node] <- ui_state$area_colors[[area_name]]
+                    }
+                    break
+                  }
+                }
+              }
+            }
+
+            n_methods <- consensus_df$N_Methods[1]
+            max_rank <- max(c(consensus_df$Avg_Strength_Rank, consensus_df$Avg_Eigen_Rank), na.rm = TRUE)
+
+            plot(consensus_df$Avg_Strength_Rank, consensus_df$Avg_Eigen_Rank,
+                 pch = 21, cex = 2.2,
+                 bg = adjustcolor(plot_colors[consensus_df$Node], alpha.f = 0.6),
+                 col = adjustcolor(plot_colors[consensus_df$Node], alpha.f = 0.8),
+                 lwd = 2,
+                 xlab = "Avg Strength Rank (lower = more important)",
+                 ylab = "Avg Eigenvector Rank (lower = more important)",
+                 main = paste0("Average Ranks (", n_methods, " method-approach combos) - ", group),
+                 xlim = c(0, max_rank * 1.05),
+                 ylim = c(0, max_rank * 1.05))
+
+            abline(a = 0, b = 1, col = "red", lty = 2, lwd = 1.5)
+            grid(col = "lightgray", lty = "dotted", lwd = 0.5)
+
+            # Label ALL nodes with smart positioning to reduce overlap
+            n_nodes <- nrow(consensus_df)
+            label_cex <- if(n_nodes > 20) 0.5 else if(n_nodes > 15) 0.55 else 0.6
+            positions <- rep(c(3, 1, 4, 2), length.out = n_nodes)
+            order_idx <- order(consensus_df$Avg_Strength_Rank + consensus_df$Avg_Eigen_Rank)
+            positions[order_idx] <- rep(c(3, 1, 4, 2), length.out = n_nodes)
+
+            for(i in 1:n_nodes) {
+              text(consensus_df$Avg_Strength_Rank[i], consensus_df$Avg_Eigen_Rank[i],
+                   labels = consensus_df$Node[i], cex = label_cex, font = 2, col = "black",
+                   pos = positions[i], offset = 0.3)
+            }
+
+            spearman_rho <- cor(consensus_df$Avg_Strength_Rank, consensus_df$Avg_Eigen_Rank,
+                               method = "spearman", use = "complete.obs")
+            legend("bottomright", legend = paste("Spearman ρ =", round(spearman_rho, 3)),
+                   bty = "n", cex = 0.9)
+
+          }, error = function(e) {
+            plot(1, type = "n", axes = FALSE, main = group)
+            text(1, 1, paste("Error:", substr(e$message, 1, 30)), cex = 0.8)
+          })
+        }
       }
     ),
 
