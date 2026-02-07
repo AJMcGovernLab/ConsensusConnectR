@@ -3532,6 +3532,21 @@ server <- function(input, output, session) {
     return(common_methods)
   }
 
+  # Helper function: Reorder groups to match user's selected_groups order
+ # This ensures all plots display groups in the same order
+  get_ordered_groups <- function(groups, selected_order = NULL) {
+    if(is.null(selected_order)) {
+      selected_order <- input$selected_groups
+    }
+    if(is.null(selected_order) || length(selected_order) == 0) {
+      return(groups)
+    }
+    # Reorder: first the groups that are in selected_order (in that order), then any remaining
+    ordered <- intersect(selected_order, groups)
+    remaining <- setdiff(groups, ordered)
+    return(c(ordered, remaining))
+  }
+
   # Helper function: Compute Jaccard similarity between correlation matrices
   compute_jaccard_similarity <- function(cor_matrix1, cor_matrix2, threshold = 0) {
     # Ensure matrices have same dimensions
@@ -9146,6 +9161,8 @@ server <- function(input, output, session) {
           break
         }
       }
+      # Reorder groups to match user's selected order
+      all_groups <- get_ordered_groups(all_groups)
 
       if(is.null(all_groups) || length(all_groups) == 0) {
         plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -9336,6 +9353,7 @@ server <- function(input, output, session) {
           break
         }
       }
+      all_groups <- get_ordered_groups(all_groups)
 
       if(is.null(all_groups) || length(all_groups) < 2) {
         plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -9421,6 +9439,7 @@ server <- function(input, output, session) {
           break
         }
       }
+      all_groups <- get_ordered_groups(all_groups)
 
       if(is.null(all_groups) || length(all_groups) < 2) {
         plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -9537,6 +9556,7 @@ server <- function(input, output, session) {
           break
         }
       }
+      all_groups <- get_ordered_groups(all_groups)
 
       if(is.null(all_groups) || length(all_groups) < 2) {
         plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")

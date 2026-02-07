@@ -760,10 +760,13 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
     "networkSimilarityHeatmapPlot" = list(
       condition = function() !is.null(analysis_results$correlation_methods_raw) && !is.null(analysis_results$method_percolation_results),
       render = function() {
+        # Get group order from comprehensive_consensus (respects user's selected_groups order)
+        group_order <- names(analysis_results$comprehensive_consensus)
         render_network_similarity_heatmap_plot(
           analysis_results$correlation_methods_raw,
           analysis_results$method_percolation_results,
-          analysis_results$persistence_results
+          analysis_results$persistence_results,
+          group_order = group_order
         )
       }
     ),
@@ -771,21 +774,24 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
     "networkSimilarityWeightedPlot" = list(
       condition = function() !is.null(analysis_results$method_weighted_results),
       render = function() {
-        render_network_similarity_weighted(analysis_results$method_weighted_results)
+        group_order <- names(analysis_results$comprehensive_consensus)
+        render_network_similarity_weighted(analysis_results$method_weighted_results, group_order = group_order)
       }
     ),
 
     "networkSimilarityPercolationPlot" = list(
       condition = function() !is.null(analysis_results$method_percolation_results),
       render = function() {
-        render_network_similarity_percolation(analysis_results$method_percolation_results)
+        group_order <- names(analysis_results$comprehensive_consensus)
+        render_network_similarity_percolation(analysis_results$method_percolation_results, group_order = group_order)
       }
     ),
 
     "networkSimilarityPersistencePlot" = list(
       condition = function() !is.null(analysis_results$persistence_results),
       render = function() {
-        render_network_similarity_persistence(analysis_results$persistence_results)
+        group_order <- names(analysis_results$comprehensive_consensus)
+        render_network_similarity_persistence(analysis_results$persistence_results, group_order = group_order)
       }
     ),
 

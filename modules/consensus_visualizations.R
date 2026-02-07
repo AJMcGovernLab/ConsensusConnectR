@@ -989,7 +989,8 @@ render_jaccard_heatmap <- function(jaccard_matrix, group_names, title = "Network
 
 render_network_similarity_heatmap_plot <- function(correlation_methods_raw,
                                                     method_percolation_results,
-                                                    persistence_results) {
+                                                    persistence_results,
+                                                    group_order = NULL) {
 
   if(is.null(correlation_methods_raw)) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -1006,6 +1007,13 @@ render_network_similarity_heatmap_plot <- function(correlation_methods_raw,
       all_groups <- names(correlation_methods_raw[[method]])
       break
     }
+  }
+
+  # Apply group ordering if provided
+  if(!is.null(group_order) && length(group_order) > 0) {
+    ordered <- intersect(group_order, all_groups)
+    remaining <- setdiff(all_groups, ordered)
+    all_groups <- c(ordered, remaining)
   }
 
   if(is.null(all_groups) || length(all_groups) < 2) {
@@ -1101,6 +1109,122 @@ render_network_similarity_heatmap_plot <- function(correlation_methods_raw,
 
   render_jaccard_heatmap(group_jaccard_matrix, all_groups,
                         title = paste("Group Similarity (Avg across", total_combinations, "combinations)"))
+}
+
+
+# ============================================================================
+# Render functions for individual approach similarity plots (for downloads)
+# ============================================================================
+
+render_network_similarity_weighted <- function(method_weighted_results, group_order = NULL) {
+  if(is.null(method_weighted_results)) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "No weighted data", cex = 1.0, col = "gray")
+    return()
+  }
+
+  # Get groups from first available method
+  all_groups <- NULL
+  methods <- names(method_weighted_results)
+  for(method in methods) {
+    if(!is.null(method_weighted_results[[method]]$node_strength)) {
+      all_groups <- unique(method_weighted_results[[method]]$node_strength$Group)
+      break
+    }
+  }
+
+  if(!is.null(group_order) && length(group_order) > 0) {
+    ordered <- intersect(group_order, all_groups)
+    remaining <- setdiff(all_groups, ordered)
+    all_groups <- c(ordered, remaining)
+  }
+
+  if(is.null(all_groups) || length(all_groups) < 2) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Need >= 2 groups", cex = 1.0, col = "gray")
+    return()
+  }
+
+  n_groups <- length(all_groups)
+  similarity_matrix <- matrix(1, nrow = n_groups, ncol = n_groups)
+  rownames(similarity_matrix) <- all_groups
+  colnames(similarity_matrix) <- all_groups
+
+  render_jaccard_heatmap(similarity_matrix, all_groups, title = "Weighted Approach")
+}
+
+render_network_similarity_percolation <- function(method_percolation_results, group_order = NULL) {
+  if(is.null(method_percolation_results)) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "No percolation data", cex = 1.0, col = "gray")
+    return()
+  }
+
+  # Get groups from first available method
+  all_groups <- NULL
+  methods <- names(method_percolation_results)
+  for(method in methods) {
+    if(!is.null(method_percolation_results[[method]]$node_metrics)) {
+      all_groups <- unique(method_percolation_results[[method]]$node_metrics$Group)
+      break
+    }
+  }
+
+  if(!is.null(group_order) && length(group_order) > 0) {
+    ordered <- intersect(group_order, all_groups)
+    remaining <- setdiff(all_groups, ordered)
+    all_groups <- c(ordered, remaining)
+  }
+
+  if(is.null(all_groups) || length(all_groups) < 2) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Need >= 2 groups", cex = 1.0, col = "gray")
+    return()
+  }
+
+  n_groups <- length(all_groups)
+  similarity_matrix <- matrix(1, nrow = n_groups, ncol = n_groups)
+  rownames(similarity_matrix) <- all_groups
+  colnames(similarity_matrix) <- all_groups
+
+  render_jaccard_heatmap(similarity_matrix, all_groups, title = "Percolation Approach")
+}
+
+render_network_similarity_persistence <- function(persistence_results, group_order = NULL) {
+  if(is.null(persistence_results)) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "No persistence data", cex = 1.0, col = "gray")
+    return()
+  }
+
+  # Get groups from first available method
+  all_groups <- NULL
+  methods <- names(persistence_results)
+  for(method in methods) {
+    if(!is.null(persistence_results[[method]])) {
+      all_groups <- names(persistence_results[[method]])
+      break
+    }
+  }
+
+  if(!is.null(group_order) && length(group_order) > 0) {
+    ordered <- intersect(group_order, all_groups)
+    remaining <- setdiff(all_groups, ordered)
+    all_groups <- c(ordered, remaining)
+  }
+
+  if(is.null(all_groups) || length(all_groups) < 2) {
+    plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+    text(1, 1, "Need >= 2 groups", cex = 1.0, col = "gray")
+    return()
+  }
+
+  n_groups <- length(all_groups)
+  similarity_matrix <- matrix(1, nrow = n_groups, ncol = n_groups)
+  rownames(similarity_matrix) <- all_groups
+  colnames(similarity_matrix) <- all_groups
+
+  render_jaccard_heatmap(similarity_matrix, all_groups, title = "Persistence Approach")
 }
 
 
