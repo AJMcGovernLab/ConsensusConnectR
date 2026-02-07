@@ -3389,9 +3389,10 @@ server <- function(input, output, session) {
   )
   
   # Default brain areas (from original)
+  # Note: DCX variants (e.g., dDG.DCX, vDG.DCX) are explicitly included for automatic assignment
   default_brain_areas <- list(
-    "Dorsal HPC" = c("dDG", "dCA1", "dCA2", "dCA3"),
-    "Ventral HPC" = c("vDG", "vCA1", "vCA3"),
+    "Dorsal HPC" = c("dDG", "dCA1", "dCA2", "dCA3", "dDG.DCX"),
+    "Ventral HPC" = c("vDG", "vCA1", "vCA3", "vDG.DCX"),
     "Subiculum" = c("dSub", "vSub"),
     "Nucleus Accumbens" = c("NaC", "NaS", "Cpu"),
     "Frontal" = c("ACC", "IL", "PRL", "CG1"),
@@ -7551,12 +7552,12 @@ server <- function(input, output, session) {
       # Add diagonal reference line (perfect rank agreement)
       abline(a = 0, b = 1, col = "red", lty = 2, lwd = 1.5)
 
-      # Add node labels overlaid on points (matching 3c style) - only for top 15 nodes
-      top_nodes_idx <- which(strength_rank >= (max_s_rank - 15) | eigenvector_rank >= (max_e_rank - 15))
-      for(i in top_nodes_idx) {
+      # Add node labels for ALL nodes with slight offset to avoid overlap
+      for(i in seq_len(nrow(group_data))) {
         text(strength_rank[i], eigenvector_rank[i],
              labels = group_data$Node[i],
-             cex = 0.7, font = 2, col = "black")
+             cex = 0.6, font = 2, col = "black",
+             pos = 3, offset = 0.4)
       }
 
       # Add Spearman correlation (rank correlation)
