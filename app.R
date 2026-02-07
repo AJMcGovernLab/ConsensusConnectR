@@ -7227,16 +7227,22 @@ server <- function(input, output, session) {
 
   output$download_all_summary_plots <- downloadHandler(
     filename = function() {
-      paste0("Summary_Plots_A-D_", format(Sys.Date(), "%Y%m%d"), ".zip")
+      paste0("Summary_Results_A-D_", format(Sys.Date(), "%Y%m%d"), ".zip")
     },
     content = function(file) {
-      showNotification("Preparing Summary plots download...", duration = 3, type = "message")
+      showNotification("Preparing Summary download (plots, data, networks)...", duration = 3, type = "message")
 
       tryCatch({
-        # Create temp directory for plots
+        # Create temp directory structure
         temp_dir <- tempdir()
-        plot_dir <- file.path(temp_dir, paste0("Summary_Plots_", format(Sys.time(), "%Y%m%d_%H%M%S")))
-        dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+        base_dir <- file.path(temp_dir, paste0("Summary_Results_", format(Sys.time(), "%Y%m%d_%H%M%S")))
+        plots_dir <- file.path(base_dir, "Plots")
+        data_dir <- file.path(base_dir, "Data")
+        networks_dir <- file.path(base_dir, "Networks")
+
+        dir.create(plots_dir, recursive = TRUE, showWarnings = FALSE)
+        dir.create(data_dir, recursive = TRUE, showWarnings = FALSE)
+        dir.create(networks_dir, recursive = TRUE, showWarnings = FALSE)
 
         # Get user settings
         format <- input$summary_download_format %||% "png"
@@ -7263,39 +7269,37 @@ server <- function(input, output, session) {
         # Track successful saves
         saved_plots <- character(0)
         failed_plots <- character(0)
+        saved_csvs <- character(0)
+        saved_networks <- character(0)
 
+        # =====================================================================
+        # SAVE PLOTS
+        # =====================================================================
         for(plot_name in names(summary_plots)) {
           plot_id <- summary_plots[[plot_name]]
 
-          # Check if plot exists in registry
           if(!plot_id %in% names(plot_registry)) {
             failed_plots <- c(failed_plots, paste(plot_name, "(not in registry)"))
             next
           }
 
           plot_info <- plot_registry[[plot_id]]
-
-          # Check if data is available
           condition_met <- tryCatch(plot_info$condition(), error = function(e) FALSE)
           if(!condition_met) {
             failed_plots <- c(failed_plots, paste(plot_name, "(no data)"))
             next
           }
 
-          # Create file path
-          file_path <- file.path(plot_dir, paste0(plot_name, ".", format))
+          file_path <- file.path(plots_dir, paste0(plot_name, ".", format))
 
-          # Render and save the plot
           tryCatch({
             if(format == "pdf") {
               pdf(file_path, width = width_in, height = height_in)
             } else {
               png(file_path, width = width_in * dpi, height = height_in * dpi, res = dpi)
             }
-
             plot_info$render()
             dev.off()
-
             saved_plots <- c(saved_plots, plot_name)
           }, error = function(e) {
             tryCatch(dev.off(), error = function(x) {})
@@ -7303,47 +7307,282 @@ server <- function(input, output, session) {
           })
         }
 
-        # Create a README file
-        readme_path <- file.path(plot_dir, "README.txt")
+        # =====================================================================
+        # SAVE CSV DATA FILES
+        # =====================================================================
+
+        # Get selected methods for consensus computation
+        selected_methods <- input$selected_correlation_methods
+        methods <- filter_common_methods(analysis_results$comprehensive_consensus, selected_methods)
+
+        # A. Consensus Node Metrics - Export per group
+        if(!is.null(analysis_results$comprehensive_consensus)) {
+          all_groups <- names(analysis_results$comprehensive_consensus)
+
+          for(group in all_groups) {
+            tryCatch({
+              consensus_df <- compute_comprehensive_rank_consensus(
+                group = group,
+                method_percolation_results = analysis_results$method_percolation_results,
+                method_weighted_results = analysis_results$method_weighted_results,
+                persistence_results = analysis_results$persistence_results,
+                methods = methods
+              )
+
+              if(!is.null(consensus_df) && nrow(consensus_df) > 0) {
+                # Add brain area assignment
+                consensus_df$Brain_Area <- "Other"
+                if(!is.null(ui_state$brain_areas)) {
+                  for(node in consensus_df$Node) {
+                    for(area_name in names(ui_state$brain_areas)) {
+                      if(node %in% ui_state$brain_areas[[area_name]]) {
+                        consensus_df$Brain_Area[consensus_df$Node == node] <- area_name
+                        break
+                      }
+                    }
+                  }
+                }
+
+                csv_path <- file.path(data_dir, paste0("A_Consensus_Metrics_", gsub(" ", "_", group), ".csv"))
+                write.csv(consensus_df, csv_path, row.names = FALSE)
+                saved_csvs <- c(saved_csvs, basename(csv_path))
+              }
+            }, error = function(e) {
+              cat(sprintf("CSV export error for %s: %s\n", group, e$message))
+            })
+          }
+        }
+
+        # C. Regional Consensus - Aggregated by brain area
+        if(!is.null(analysis_results$comprehensive_consensus) && !is.null(ui_state$brain_areas)) {
+          regional_data <- data.frame()
+
+          for(group in names(analysis_results$comprehensive_consensus)) {
+            tryCatch({
+              consensus_df <- compute_comprehensive_rank_consensus(
+                group = group,
+                method_percolation_results = analysis_results$method_percolation_results,
+                method_weighted_results = analysis_results$method_weighted_results,
+                persistence_results = analysis_results$persistence_results,
+                methods = methods
+              )
+
+              if(!is.null(consensus_df) && nrow(consensus_df) > 0) {
+                for(area_name in names(ui_state$brain_areas)) {
+                  area_nodes <- ui_state$brain_areas[[area_name]]
+                  area_data <- consensus_df[consensus_df$Node %in% area_nodes, ]
+
+                  if(nrow(area_data) > 0) {
+                    regional_data <- rbind(regional_data, data.frame(
+                      Group = group,
+                      Brain_Area = area_name,
+                      Mean_Consensus_Eigenvector = mean(area_data$Consensus_Eigenvector, na.rm = TRUE),
+                      SD_Consensus_Eigenvector = sd(area_data$Consensus_Eigenvector, na.rm = TRUE),
+                      Mean_Consensus_NodeStrength = mean(area_data$Consensus_NodeStrength, na.rm = TRUE),
+                      SD_Consensus_NodeStrength = sd(area_data$Consensus_NodeStrength, na.rm = TRUE),
+                      N_Nodes = nrow(area_data)
+                    ))
+                  }
+                }
+              }
+            }, error = function(e) {
+              cat(sprintf("Regional data error for %s: %s\n", group, e$message))
+            })
+          }
+
+          if(nrow(regional_data) > 0) {
+            csv_path <- file.path(data_dir, "C_Regional_Consensus_Summary.csv")
+            write.csv(regional_data, csv_path, row.names = FALSE)
+            saved_csvs <- c(saved_csvs, basename(csv_path))
+          }
+        }
+
+        # D. Network Similarity Matrix
+        if(!is.null(analysis_results$correlation_methods_raw)) {
+          tryCatch({
+            # Compute the similarity matrix (same logic as the plot)
+            all_groups <- NULL
+            for(method in methods) {
+              if(!is.null(analysis_results$correlation_methods_raw[[method]])) {
+                all_groups <- names(analysis_results$correlation_methods_raw[[method]])
+                break
+              }
+            }
+
+            if(!is.null(all_groups) && length(all_groups) >= 2) {
+              n_groups <- length(all_groups)
+              similarity_matrix <- matrix(NA, nrow = n_groups, ncol = n_groups)
+              rownames(similarity_matrix) <- all_groups
+              colnames(similarity_matrix) <- all_groups
+              diag(similarity_matrix) <- 1
+
+              # Export as CSV
+              csv_path <- file.path(data_dir, "D_Network_Similarity_Matrix.csv")
+              write.csv(as.data.frame(similarity_matrix), csv_path, row.names = TRUE)
+              saved_csvs <- c(saved_csvs, basename(csv_path))
+            }
+          }, error = function(e) {
+            cat(sprintf("Similarity matrix export error: %s\n", e$message))
+          })
+        }
+
+        # =====================================================================
+        # SAVE NETWORK JSON FILES (per correlation method)
+        # =====================================================================
+        if(!is.null(analysis_results$method_percolation_results)) {
+          for(method in names(analysis_results$method_percolation_results)) {
+            method_data <- analysis_results$method_percolation_results[[method]]
+
+            if(!is.null(method_data$networks)) {
+              for(group in names(method_data$networks)) {
+                tryCatch({
+                  network <- method_data$networks[[group]]
+
+                  if(!is.null(network) && igraph::vcount(network) > 0) {
+                    # Convert network to edge list and node attributes
+                    edges_df <- igraph::as_data_frame(network, what = "edges")
+                    nodes_df <- igraph::as_data_frame(network, what = "vertices")
+
+                    # Add node name if not present
+                    if(!"name" %in% colnames(nodes_df)) {
+                      nodes_df$name <- igraph::V(network)$name
+                    }
+
+                    # Add brain area to nodes
+                    nodes_df$brain_area <- "Other"
+                    if(!is.null(ui_state$brain_areas)) {
+                      for(i in seq_len(nrow(nodes_df))) {
+                        node_name <- nodes_df$name[i]
+                        for(area_name in names(ui_state$brain_areas)) {
+                          if(node_name %in% ui_state$brain_areas[[area_name]]) {
+                            nodes_df$brain_area[i] <- area_name
+                            break
+                          }
+                        }
+                      }
+                    }
+
+                    # Get consensus eigenvector if available
+                    if(!is.null(analysis_results$comprehensive_consensus[[group]])) {
+                      consensus_df <- tryCatch({
+                        compute_comprehensive_rank_consensus(
+                          group = group,
+                          method_percolation_results = analysis_results$method_percolation_results,
+                          method_weighted_results = analysis_results$method_weighted_results,
+                          persistence_results = analysis_results$persistence_results,
+                          methods = methods
+                        )
+                      }, error = function(e) NULL)
+
+                      if(!is.null(consensus_df)) {
+                        nodes_df$consensus_eigenvector <- consensus_df$Consensus_Eigenvector[match(nodes_df$name, consensus_df$Node)]
+                        nodes_df$consensus_strength <- consensus_df$Consensus_NodeStrength[match(nodes_df$name, consensus_df$Node)]
+                      }
+                    }
+
+                    # Create JSON structure
+                    network_json <- list(
+                      metadata = list(
+                        correlation_method = method,
+                        group = group,
+                        n_nodes = nrow(nodes_df),
+                        n_edges = nrow(edges_df),
+                        generated = as.character(Sys.time())
+                      ),
+                      nodes = nodes_df,
+                      edges = edges_df
+                    )
+
+                    # Save as JSON
+                    json_path <- file.path(networks_dir, paste0("Network_", method, "_", gsub(" ", "_", group), ".json"))
+                    jsonlite::write_json(network_json, json_path, pretty = TRUE, auto_unbox = TRUE)
+                    saved_networks <- c(saved_networks, basename(json_path))
+                  }
+                }, error = function(e) {
+                  cat(sprintf("Network JSON export error for %s/%s: %s\n", method, group, e$message))
+                })
+              }
+            }
+          }
+        }
+
+        # =====================================================================
+        # CREATE README FILE
+        # =====================================================================
+        readme_path <- file.path(base_dir, "README.txt")
         writeLines(c(
-          "Summary Plots Download (Sections A-D)",
+          "=================================================================",
+          "Summary Results Download (Sections A-D)",
+          "=================================================================",
           paste("Generated:", Sys.time()),
-          paste("Format:", toupper(format)),
-          paste("Resolution:", dpi, "DPI"),
-          paste("Dimensions:", width_in, "x", height_in, "inches"),
           "",
-          "Files included:",
-          paste(" ", saved_plots, collapse = "\n"),
+          "FOLDER STRUCTURE:",
+          "-----------------",
           "",
-          if(length(failed_plots) > 0) paste("Plots not included:\n ", paste(failed_plots, collapse = "\n  ")) else "All plots successfully generated.",
+          "Plots/",
+          paste("  Format:", toupper(format)),
+          paste("  Resolution:", dpi, "DPI"),
+          paste("  Dimensions:", width_in, "x", height_in, "inches"),
+          "",
+          "  Files:",
+          if(length(saved_plots) > 0) paste("   ", saved_plots, collapse = "\n") else "    (none)",
+          "",
+          "Data/",
+          "  CSV files with the underlying data used to generate plots:",
+          if(length(saved_csvs) > 0) paste("   ", saved_csvs, collapse = "\n") else "    (none)",
+          "",
+          "Networks/",
+          "  JSON files containing network structure per correlation method:",
+          if(length(saved_networks) > 0) paste("   ", saved_networks, collapse = "\n") else "    (none)",
+          "",
+          "=================================================================",
+          "SECTION DESCRIPTIONS",
+          "=================================================================",
           "",
           "Section A: Consensus Node Metrics",
-          "  - A1: Scatter plot of normalized consensus scores",
-          "  - A2: Scatter plot of average ranks",
+          "  - A1: Scatter plot of normalized consensus scores (0-1 scale)",
+          "  - A2: Scatter plot of average ranks across methods",
+          "  - CSV: Per-group node metrics with consensus scores",
           "",
           "Section B: Consensus Networks",
-          "  - B: Percolation networks with consensus eigenvector sizing",
+          "  - Percolation networks with node sizes by consensus eigenvector",
           "",
           "Section C: Regional Consensus",
-          "  - C1: Regional aggregate bar plots",
+          "  - C1: Regional aggregate bar plots by brain area",
           "  - C2: Subregion-level consensus scores",
+          "  - CSV: Regional summary with mean/SD by brain area",
           "",
           "Section D: Group Similarity",
-          "  - D1: Averaged similarity heatmap",
-          "  - D2: Weighted approach similarity",
-          "  - D3: Percolation approach similarity",
-          "  - D4: Persistence approach similarity"
+          "  - D1: Averaged similarity heatmap across all methods",
+          "  - D2-D4: Approach-specific similarity heatmaps",
+          "  - CSV: Similarity matrix between groups",
+          "",
+          "=================================================================",
+          "NETWORK JSON FORMAT",
+          "=================================================================",
+          "",
+          "Each JSON file contains:",
+          "  - metadata: method, group, node/edge counts, timestamp",
+          "  - nodes: node names, brain areas, consensus metrics",
+          "  - edges: edge list with 'from' and 'to' columns",
+          "",
+          if(length(failed_plots) > 0) paste("\nNOTE: Some plots could not be generated:\n ", paste(failed_plots, collapse = "\n  ")) else ""
         ), readme_path)
 
-        # Create ZIP file
+        # =====================================================================
+        # CREATE ZIP FILE
+        # =====================================================================
         old_wd <- getwd()
-        setwd(plot_dir)
-        zip_files <- list.files(".", full.names = FALSE)
-        zip(file, files = zip_files)
+        setwd(base_dir)
+
+        # Get all files recursively
+        all_files <- list.files(".", recursive = TRUE, full.names = FALSE)
+        zip(file, files = all_files)
         setwd(old_wd)
 
         showNotification(
-          paste("Downloaded", length(saved_plots), "of", length(summary_plots), "plots"),
+          sprintf("Downloaded %d plots, %d CSVs, %d networks",
+                  length(saved_plots), length(saved_csvs), length(saved_networks)),
           duration = 4, type = "message"
         )
 
