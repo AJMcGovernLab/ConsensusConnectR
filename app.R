@@ -7460,6 +7460,14 @@ server <- function(input, output, session) {
                     edges_df <- igraph::as_data_frame(network, what = "edges")
                     nodes_df <- igraph::as_data_frame(network, what = "vertices")
 
+                    # Ensure edge weights are included (correlation values)
+                    if(!"weight" %in% colnames(edges_df)) {
+                      edge_weights <- igraph::E(network)$weight
+                      if(!is.null(edge_weights)) {
+                        edges_df$weight <- edge_weights
+                      }
+                    }
+
                     # Add node name if not present
                     if(!"name" %in% colnames(nodes_df)) {
                       nodes_df$name <- igraph::V(network)$name
@@ -7527,6 +7535,7 @@ server <- function(input, output, session) {
                       '  <key id="betweenness" for="node" attr.name="consensus_betweenness" attr.type="double"/>',
                       '  <!-- Edge attributes -->',
                       '  <key id="weight" for="edge" attr.name="weight" attr.type="double"/>',
+                      '  <key id="abs_weight" for="edge" attr.name="abs_weight" attr.type="double"/>',
                       paste0('  <graph id="', method, '_', gsub(" ", "_", group), '" edgedefault="undirected">')
                     )
 
@@ -7559,6 +7568,7 @@ server <- function(input, output, session) {
                       edge_lines <- paste0('    <edge id="e', i, '" source="', source_id, '" target="', target_id, '">')
                       if("weight" %in% colnames(edges_df) && !is.na(edges_df$weight[i])) {
                         edge_lines <- c(edge_lines, paste0('      <data key="weight">', round(edges_df$weight[i], 6), '</data>'))
+                        edge_lines <- c(edge_lines, paste0('      <data key="abs_weight">', round(abs(edges_df$weight[i]), 6), '</data>'))
                       }
                       edge_lines <- c(edge_lines, '    </edge>')
                       graphml_lines <- c(graphml_lines, edge_lines)
