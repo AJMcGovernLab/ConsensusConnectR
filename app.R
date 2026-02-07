@@ -742,6 +742,42 @@ create_summary_ui <- function() {
       )
     ),
 
+    # Download All Summary Plots Panel
+    fluidRow(
+      column(
+        width = 12,
+        box(
+          title = "📥 Download All Summary Plots (A-D)", status = "primary", solidHeader = TRUE, width = NULL, collapsible = TRUE, collapsed = TRUE,
+          fluidRow(
+            column(3,
+              selectInput("summary_download_format", "Image Format:",
+                         choices = c("PNG" = "png", "PDF" = "pdf"),
+                         selected = "png")
+            ),
+            column(3,
+              numericInput("summary_download_dpi", "Resolution (DPI):",
+                          value = 300, min = 72, max = 600, step = 50)
+            ),
+            column(3,
+              numericInput("summary_download_width", "Width (inches):",
+                          value = 12, min = 6, max = 24, step = 1)
+            ),
+            column(3,
+              numericInput("summary_download_height", "Height (inches):",
+                          value = 10, min = 6, max = 24, step = 1)
+            )
+          ),
+          fluidRow(
+            column(12,
+              tags$p("Download a ZIP file containing all plots from sections A (Consensus Node Metrics), B (Consensus Networks), C (Regional Consensus), and D (Group Similarity).",
+                     style = "font-size: 0.9em; color: #666; margin-bottom: 10px;"),
+              downloadButton("download_all_summary_plots", "Download All Plots (A-D)", class = "btn-success btn-lg")
+            )
+          )
+        )
+      )
+    ),
+
     fluidRow(
       column(
         width = 12,
@@ -7181,6 +7217,139 @@ server <- function(input, output, session) {
       }, error = function(e) {
         showNotification(paste("Error creating download:", e$message), duration = 5, type = "error")
         cat("Download error:", e$message, "\n")
+      })
+    }
+  )
+
+  # ========================================================================
+  # DOWNLOAD ALL SUMMARY PLOTS (A-D) HANDLER
+  # ========================================================================
+
+  output$download_all_summary_plots <- downloadHandler(
+    filename = function() {
+      paste0("Summary_Plots_A-D_", format(Sys.Date(), "%Y%m%d"), ".zip")
+    },
+    content = function(file) {
+      showNotification("Preparing Summary plots download...", duration = 3, type = "message")
+
+      tryCatch({
+        # Create temp directory for plots
+        temp_dir <- tempdir()
+        plot_dir <- file.path(temp_dir, paste0("Summary_Plots_", format(Sys.time(), "%Y%m%d_%H%M%S")))
+        dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+        # Get user settings
+        format <- input$summary_download_format %||% "png"
+        dpi <- as.numeric(input$summary_download_dpi %||% 300)
+        width_in <- as.numeric(input$summary_download_width %||% 12)
+        height_in <- as.numeric(input$summary_download_height %||% 10)
+
+        # Get the plot registry
+        plot_registry <- create_hover_plot_registry(analysis_results, ui_state, input)
+
+        # Define the plots to download for sections A, B, C, D
+        summary_plots <- list(
+          "A1_Consensus_Node_Metrics" = "consensusNodeMetricsAcrossMethodsPlot",
+          "A2_Consensus_Node_Ranks" = "consensusNodeRanksPlot",
+          "B_Consensus_Networks" = "consensusNetworkPlot",
+          "C1_Regional_Consensus" = "consensusRegionalPlot",
+          "C2_Subregional_Consensus" = "consensusSubregionalPlot",
+          "D1_Network_Similarity_Heatmap" = "networkSimilarityHeatmapPlot",
+          "D2_Network_Similarity_Weighted" = "networkSimilarityWeightedPlot",
+          "D3_Network_Similarity_Percolation" = "networkSimilarityPercolationPlot",
+          "D4_Network_Similarity_Persistence" = "networkSimilarityPersistencePlot"
+        )
+
+        # Track successful saves
+        saved_plots <- character(0)
+        failed_plots <- character(0)
+
+        for(plot_name in names(summary_plots)) {
+          plot_id <- summary_plots[[plot_name]]
+
+          # Check if plot exists in registry
+          if(!plot_id %in% names(plot_registry)) {
+            failed_plots <- c(failed_plots, paste(plot_name, "(not in registry)"))
+            next
+          }
+
+          plot_info <- plot_registry[[plot_id]]
+
+          # Check if data is available
+          condition_met <- tryCatch(plot_info$condition(), error = function(e) FALSE)
+          if(!condition_met) {
+            failed_plots <- c(failed_plots, paste(plot_name, "(no data)"))
+            next
+          }
+
+          # Create file path
+          file_path <- file.path(plot_dir, paste0(plot_name, ".", format))
+
+          # Render and save the plot
+          tryCatch({
+            if(format == "pdf") {
+              pdf(file_path, width = width_in, height = height_in)
+            } else {
+              png(file_path, width = width_in * dpi, height = height_in * dpi, res = dpi)
+            }
+
+            plot_info$render()
+            dev.off()
+
+            saved_plots <- c(saved_plots, plot_name)
+          }, error = function(e) {
+            tryCatch(dev.off(), error = function(x) {})
+            failed_plots <- c(failed_plots, paste(plot_name, "(render error)"))
+          })
+        }
+
+        # Create a README file
+        readme_path <- file.path(plot_dir, "README.txt")
+        writeLines(c(
+          "Summary Plots Download (Sections A-D)",
+          paste("Generated:", Sys.time()),
+          paste("Format:", toupper(format)),
+          paste("Resolution:", dpi, "DPI"),
+          paste("Dimensions:", width_in, "x", height_in, "inches"),
+          "",
+          "Files included:",
+          paste(" ", saved_plots, collapse = "\n"),
+          "",
+          if(length(failed_plots) > 0) paste("Plots not included:\n ", paste(failed_plots, collapse = "\n  ")) else "All plots successfully generated.",
+          "",
+          "Section A: Consensus Node Metrics",
+          "  - A1: Scatter plot of normalized consensus scores",
+          "  - A2: Scatter plot of average ranks",
+          "",
+          "Section B: Consensus Networks",
+          "  - B: Percolation networks with consensus eigenvector sizing",
+          "",
+          "Section C: Regional Consensus",
+          "  - C1: Regional aggregate bar plots",
+          "  - C2: Subregion-level consensus scores",
+          "",
+          "Section D: Group Similarity",
+          "  - D1: Averaged similarity heatmap",
+          "  - D2: Weighted approach similarity",
+          "  - D3: Percolation approach similarity",
+          "  - D4: Persistence approach similarity"
+        ), readme_path)
+
+        # Create ZIP file
+        old_wd <- getwd()
+        setwd(plot_dir)
+        zip_files <- list.files(".", full.names = FALSE)
+        zip(file, files = zip_files)
+        setwd(old_wd)
+
+        showNotification(
+          paste("Downloaded", length(saved_plots), "of", length(summary_plots), "plots"),
+          duration = 4, type = "message"
+        )
+
+      }, error = function(e) {
+        showNotification(paste("Error creating download:", e$message), duration = 5, type = "error")
+        cat("Summary download error:", e$message, "\n")
       })
     }
   )
