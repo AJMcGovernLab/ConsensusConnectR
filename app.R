@@ -3072,11 +3072,13 @@ ui <- dashboardPage(
                   
                   selectizeInput(
                     "selected_groups",
-                    "Groups to Include:",
+                    "Groups to Include (drag to reorder):",
                     choices = NULL,
                     multiple = TRUE,
-                    options = list(plugins = list('remove_button'))
+                    options = list(plugins = list('remove_button', 'drag_drop'))
                   ),
+                  tags$p(tags$em("Tip: Drag groups to set the order they appear in plots."),
+                         style = "font-size: 0.85em; color: #666; margin-top: -10px;"),
                   
                   div(
                     class = "btn-group",
