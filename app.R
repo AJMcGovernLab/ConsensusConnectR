@@ -8442,13 +8442,11 @@ server <- function(input, output, session) {
         abline(a = 0, b = 1, col = "red", lty = 2, lwd = 1.5)
         grid(col = "lightgray", lty = "dotted", lwd = 0.5)
 
-        # Label top 15 nodes by either metric
-        top_nodes <- consensus_df[consensus_df$Consensus_Eigenvector >= sort(consensus_df$Consensus_Eigenvector, decreasing = TRUE)[min(15, nrow(consensus_df))] |
-                                  consensus_df$Consensus_NodeStrength >= sort(consensus_df$Consensus_NodeStrength, decreasing = TRUE)[min(15, nrow(consensus_df))], ]
-
-        for (i in 1:nrow(top_nodes)) {
-          text(top_nodes$Consensus_NodeStrength[i], top_nodes$Consensus_Eigenvector[i],
-               labels = top_nodes$Node[i], cex = 0.7, font = 2, col = "black")
+        # Label ALL nodes with offset positioning
+        for (i in 1:nrow(consensus_df)) {
+          text(consensus_df$Consensus_NodeStrength[i], consensus_df$Consensus_Eigenvector[i],
+               labels = consensus_df$Node[i], cex = 0.6, font = 2, col = "black",
+               pos = 3, offset = 0.4)
         }
 
         spearman_rho <- cor(consensus_df$Consensus_NodeStrength, consensus_df$Consensus_Eigenvector,
@@ -8531,13 +8529,11 @@ server <- function(input, output, session) {
         abline(a = 0, b = 1, col = "red", lty = 2, lwd = 1.5)
         grid(col = "lightgray", lty = "dotted", lwd = 0.5)
 
-        # Label top 15 nodes (lowest average ranks)
-        top_nodes <- consensus_df[consensus_df$Avg_Eigen_Rank <= sort(consensus_df$Avg_Eigen_Rank)[min(15, nrow(consensus_df))] |
-                                  consensus_df$Avg_Strength_Rank <= sort(consensus_df$Avg_Strength_Rank)[min(15, nrow(consensus_df))], ]
-
-        for (i in 1:nrow(top_nodes)) {
-          text(top_nodes$Avg_Strength_Rank[i], top_nodes$Avg_Eigen_Rank[i],
-               labels = top_nodes$Node[i], cex = 0.7, font = 2, col = "black")
+        # Label ALL nodes with offset positioning
+        for (i in 1:nrow(consensus_df)) {
+          text(consensus_df$Avg_Strength_Rank[i], consensus_df$Avg_Eigen_Rank[i],
+               labels = consensus_df$Node[i], cex = 0.6, font = 2, col = "black",
+               pos = 3, offset = 0.4)
         }
 
         spearman_rho <- cor(consensus_df$Avg_Strength_Rank, consensus_df$Avg_Eigen_Rank,
