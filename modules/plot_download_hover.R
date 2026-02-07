@@ -762,36 +762,56 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
       render = function() {
         # Get group order from comprehensive_consensus (respects user's selected_groups order)
         group_order <- names(analysis_results$comprehensive_consensus)
+        # Get selected methods from input
+        selected_methods <- input$selected_correlation_methods
         render_network_similarity_heatmap_plot(
           analysis_results$correlation_methods_raw,
           analysis_results$method_percolation_results,
           analysis_results$persistence_results,
-          group_order = group_order
+          group_order = group_order,
+          selected_methods = selected_methods
         )
       }
     ),
 
     "networkSimilarityWeightedPlot" = list(
-      condition = function() !is.null(analysis_results$method_weighted_results),
+      condition = function() !is.null(analysis_results$correlation_methods_raw),
       render = function() {
         group_order <- names(analysis_results$comprehensive_consensus)
-        render_network_similarity_weighted(analysis_results$method_weighted_results, group_order = group_order)
+        selected_methods <- input$selected_correlation_methods
+        render_network_similarity_weighted(
+          analysis_results$correlation_methods_raw,
+          group_order = group_order,
+          selected_methods = selected_methods
+        )
       }
     ),
 
     "networkSimilarityPercolationPlot" = list(
-      condition = function() !is.null(analysis_results$method_percolation_results),
+      condition = function() !is.null(analysis_results$method_percolation_results) && !is.null(analysis_results$correlation_methods_raw),
       render = function() {
         group_order <- names(analysis_results$comprehensive_consensus)
-        render_network_similarity_percolation(analysis_results$method_percolation_results, group_order = group_order)
+        selected_methods <- input$selected_correlation_methods
+        render_network_similarity_percolation(
+          analysis_results$correlation_methods_raw,
+          analysis_results$method_percolation_results,
+          group_order = group_order,
+          selected_methods = selected_methods
+        )
       }
     ),
 
     "networkSimilarityPersistencePlot" = list(
-      condition = function() !is.null(analysis_results$persistence_results),
+      condition = function() !is.null(analysis_results$persistence_results) && !is.null(analysis_results$correlation_methods_raw),
       render = function() {
         group_order <- names(analysis_results$comprehensive_consensus)
-        render_network_similarity_persistence(analysis_results$persistence_results, group_order = group_order)
+        selected_methods <- input$selected_correlation_methods
+        render_network_similarity_persistence(
+          analysis_results$correlation_methods_raw,
+          analysis_results$persistence_results,
+          group_order = group_order,
+          selected_methods = selected_methods
+        )
       }
     ),
 

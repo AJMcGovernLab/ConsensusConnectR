@@ -7497,17 +7497,61 @@ server <- function(input, output, session) {
                       }
                     }
 
-                    # Create JSON structure
+                    # Get node colors from brain area
+                    nodes_df$color <- "#808080"  # Default gray
+                    if(!is.null(ui_state$brain_areas) && !is.null(ui_state$area_colors)) {
+                      for(i in seq_len(nrow(nodes_df))) {
+                        area <- nodes_df$brain_area[i]
+                        if(area %in% names(ui_state$area_colors)) {
+                          nodes_df$color[i] <- ui_state$area_colors[[area]]
+                        }
+                      }
+                    }
+
+                    # Create Cytoscape.js compatible JSON format
+                    # Nodes: each node is { data: { id: ..., ... } }
+                    cytoscape_nodes <- lapply(seq_len(nrow(nodes_df)), function(i) {
+                      node_data <- as.list(nodes_df[i, , drop = FALSE])
+                      node_data$id <- nodes_df$name[i]
+                      # Add size based on consensus eigenvector (scaled for Cytoscape)
+                      if(!is.null(nodes_df$consensus_eigenvector[i]) && !is.na(nodes_df$consensus_eigenvector[i])) {
+                        node_data$size <- 20 + (nodes_df$consensus_eigenvector[i] * 40)
+                      } else {
+                        node_data$size <- 30
+                      }
+                      list(data = node_data)
+                    })
+
+                    # Edges: each edge is { data: { id: ..., source: ..., target: ..., ... } }
+                    cytoscape_edges <- lapply(seq_len(nrow(edges_df)), function(i) {
+                      edge_data <- as.list(edges_df[i, , drop = FALSE])
+                      edge_data$id <- paste0("e", i)
+                      edge_data$source <- edges_df$from[i]
+                      edge_data$target <- edges_df$to[i]
+                      # Add weight if available
+                      if("weight" %in% colnames(edges_df)) {
+                        edge_data$weight <- edges_df$weight[i]
+                      }
+                      list(data = edge_data)
+                    })
+
+                    # Create Cytoscape.js compatible structure
                     network_json <- list(
-                      metadata = list(
+                      format_version = "1.0",
+                      generated_by = "ConsensusConnectR",
+                      target_cytoscapejs_version = "~3.0",
+                      data = list(
+                        name = paste(method, "-", group),
                         correlation_method = method,
                         group = group,
                         n_nodes = nrow(nodes_df),
                         n_edges = nrow(edges_df),
                         generated = as.character(Sys.time())
                       ),
-                      nodes = nodes_df,
-                      edges = edges_df
+                      elements = list(
+                        nodes = cytoscape_nodes,
+                        edges = cytoscape_edges
+                      )
                     )
 
                     # Save as JSON
@@ -7575,13 +7619,21 @@ server <- function(input, output, session) {
           "  - CSV: Similarity matrix between groups",
           "",
           "=================================================================",
-          "NETWORK JSON FORMAT",
+          "NETWORK JSON FORMAT (Cytoscape.js Compatible)",
           "=================================================================",
           "",
-          "Each JSON file contains:",
-          "  - metadata: method, group, node/edge counts, timestamp",
-          "  - nodes: node names, brain areas, consensus metrics",
-          "  - edges: edge list with 'from' and 'to' columns",
+          "Each JSON file is in Cytoscape.js format for direct import:",
+          "",
+          "  data: network metadata (method, group, node/edge counts)",
+          "  elements:",
+          "    nodes: [ { data: { id, name, brain_area, color, size,",
+          "                       consensus_eigenvector, consensus_strength } } ]",
+          "    edges: [ { data: { id, source, target, weight } } ]",
+          "",
+          "To import in Cytoscape Desktop:",
+          "  1. File > Import > Network from File",
+          "  2. Select the JSON file",
+          "  3. Node size and color are pre-configured based on consensus metrics",
           "",
           if(length(failed_plots) > 0) paste("\nNOTE: Some plots could not be generated:\n ", paste(failed_plots, collapse = "\n  ")) else ""
         ), readme_path)
@@ -9185,8 +9237,8 @@ server <- function(input, output, session) {
       colnames(group_jaccard_matrix) <- all_groups
       combination_count <- matrix(0, nrow = n_groups, ncol = n_groups)
 
-      # Helper function: compute average Jaccard across all thresholds for persistence approach
-      compute_persistence_avg_jaccard <- function(method, group_i, group_j) {
+      # Helper function: compute AUC of Jaccard across thresholds using trapezoidal integration
+      compute_persistence_auc_jaccard <- function(method, group_i, group_j) {
         pers_data_i <- analysis_results$persistence_results[[method]][[group_i]]$persistence_data
         pers_data_j <- analysis_results$persistence_results[[method]][[group_j]]$persistence_data
         cor_mat_i_raw <- analysis_results$correlation_methods_raw[[method]][[group_i]]
@@ -9200,7 +9252,7 @@ server <- function(input, output, session) {
         # Get thresholds available in both groups
         threshold_vals <- sort(as.numeric(intersect(names(pers_data_i), names(pers_data_j))))
 
-        if(length(threshold_vals) == 0) {
+        if(length(threshold_vals) < 2) {
           return(NA)
         }
 
@@ -9219,8 +9271,22 @@ server <- function(input, output, session) {
           jaccard_at_thresholds[t_idx] <- compute_jaccard_similarity(cor_mat_i, cor_mat_j, threshold = 0)
         }
 
-        # Return average Jaccard across all thresholds
-        mean(jaccard_at_thresholds, na.rm = TRUE)
+        # Compute AUC using trapezoidal integration
+        # AUC = sum of trapezoids: (x[i+1] - x[i]) * (y[i] + y[i+1]) / 2
+        auc <- 0
+        for(i in 1:(length(threshold_vals) - 1)) {
+          dx <- threshold_vals[i + 1] - threshold_vals[i]
+          avg_y <- (jaccard_at_thresholds[i] + jaccard_at_thresholds[i + 1]) / 2
+          auc <- auc + dx * avg_y
+        }
+
+        # Normalize by threshold range to get value between 0 and 1
+        threshold_range <- max(threshold_vals) - min(threshold_vals)
+        if(threshold_range > 0) {
+          auc <- auc / threshold_range
+        }
+
+        return(auc)
       }
 
       # For each method-approach combination, compute group-to-group similarity
@@ -9234,7 +9300,7 @@ server <- function(input, output, session) {
                 group_i <- all_groups[i]
                 group_j <- all_groups[j]
 
-                avg_jaccard <- compute_persistence_avg_jaccard(method, group_i, group_j)
+                avg_jaccard <- compute_persistence_auc_jaccard(method, group_i, group_j)
 
                 if(!is.na(avg_jaccard)) {
                   group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] + avg_jaccard
@@ -9570,8 +9636,8 @@ server <- function(input, output, session) {
       colnames(group_jaccard_matrix) <- all_groups
       combination_count <- matrix(0, nrow = n_groups, ncol = n_groups)
 
-      # Helper function: compute average Jaccard across all thresholds
-      compute_persistence_avg_jaccard_local <- function(method, group_i, group_j) {
+      # Helper function: compute AUC of Jaccard using trapezoidal integration
+      compute_persistence_auc_jaccard_local <- function(method, group_i, group_j) {
         pers_data_i <- analysis_results$persistence_results[[method]][[group_i]]$persistence_data
         pers_data_j <- analysis_results$persistence_results[[method]][[group_j]]$persistence_data
         cor_mat_i_raw <- analysis_results$correlation_methods_raw[[method]][[group_i]]
@@ -9583,7 +9649,7 @@ server <- function(input, output, session) {
         }
 
         threshold_vals <- sort(as.numeric(intersect(names(pers_data_i), names(pers_data_j))))
-        if(length(threshold_vals) == 0) return(NA)
+        if(length(threshold_vals) < 2) return(NA)
 
         jaccard_at_thresholds <- numeric(length(threshold_vals))
         for(t_idx in seq_along(threshold_vals)) {
@@ -9595,7 +9661,16 @@ server <- function(input, output, session) {
           jaccard_at_thresholds[t_idx] <- compute_jaccard_similarity(cor_mat_i, cor_mat_j, threshold = 0)
         }
 
-        mean(jaccard_at_thresholds, na.rm = TRUE)
+        # Trapezoidal AUC
+        auc <- 0
+        for(i in 1:(length(threshold_vals) - 1)) {
+          dx <- threshold_vals[i + 1] - threshold_vals[i]
+          avg_y <- (jaccard_at_thresholds[i] + jaccard_at_thresholds[i + 1]) / 2
+          auc <- auc + dx * avg_y
+        }
+        threshold_range <- max(threshold_vals) - min(threshold_vals)
+        if(threshold_range > 0) auc <- auc / threshold_range
+        return(auc)
       }
 
       # Compute persistence Jaccard for each method
@@ -9604,7 +9679,7 @@ server <- function(input, output, session) {
           for(j in (i+1):n_groups) {
             group_i <- all_groups[i]
             group_j <- all_groups[j]
-            avg_jaccard <- compute_persistence_avg_jaccard_local(method, group_i, group_j)
+            avg_jaccard <- compute_persistence_auc_jaccard_local(method, group_i, group_j)
             if(!is.na(avg_jaccard)) {
               group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] + avg_jaccard
               group_jaccard_matrix[j, i] <- group_jaccard_matrix[j, i] + avg_jaccard

@@ -990,7 +990,8 @@ render_jaccard_heatmap <- function(jaccard_matrix, group_names, title = "Network
 render_network_similarity_heatmap_plot <- function(correlation_methods_raw,
                                                     method_percolation_results,
                                                     persistence_results,
-                                                    group_order = NULL) {
+                                                    group_order = NULL,
+                                                    selected_methods = NULL) {
 
   if(is.null(correlation_methods_raw)) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -998,7 +999,13 @@ render_network_similarity_heatmap_plot <- function(correlation_methods_raw,
     return()
   }
 
-  methods <- c("pearson", "spearman", "biweight", "shrinkage", "partial")
+  # Use selected methods if provided, otherwise use all available
+  if(is.null(selected_methods) || length(selected_methods) == 0) {
+    methods <- intersect(c("pearson", "spearman", "biweight", "shrinkage", "partial"),
+                         names(correlation_methods_raw))
+  } else {
+    methods <- intersect(selected_methods, names(correlation_methods_raw))
+  }
   approaches <- c("weighted", "percolation", "persistence")
 
   all_groups <- NULL
@@ -1029,59 +1036,99 @@ render_network_similarity_heatmap_plot <- function(correlation_methods_raw,
   colnames(group_jaccard_matrix) <- all_groups
   combination_count <- matrix(0, nrow = n_groups, ncol = n_groups)
 
+  # Helper: compute AUC of Jaccard across thresholds using trapezoidal integration
+  compute_persistence_auc_jaccard <- function(method, group_i, group_j) {
+    pers_data_i <- persistence_results[[method]][[group_i]]$persistence_data
+    pers_data_j <- persistence_results[[method]][[group_j]]$persistence_data
+    cor_mat_i_raw <- correlation_methods_raw[[method]][[group_i]]
+    cor_mat_j_raw <- correlation_methods_raw[[method]][[group_j]]
+
+    if(is.null(pers_data_i) || is.null(pers_data_j) ||
+       is.null(cor_mat_i_raw) || is.null(cor_mat_j_raw)) {
+      return(NA)
+    }
+
+    threshold_vals <- sort(as.numeric(intersect(names(pers_data_i), names(pers_data_j))))
+    if(length(threshold_vals) < 2) return(NA)
+
+    jaccard_at_thresholds <- numeric(length(threshold_vals))
+    for(t_idx in seq_along(threshold_vals)) {
+      thresh <- threshold_vals[t_idx]
+      cor_mat_i <- abs(cor_mat_i_raw)
+      cor_mat_j <- abs(cor_mat_j_raw)
+      cor_mat_i[cor_mat_i < thresh] <- 0
+      cor_mat_j[cor_mat_j < thresh] <- 0
+      jaccard_at_thresholds[t_idx] <- compute_jaccard_similarity(cor_mat_i, cor_mat_j, threshold = 0)
+    }
+
+    # Trapezoidal AUC
+    auc <- 0
+    for(i in 1:(length(threshold_vals) - 1)) {
+      dx <- threshold_vals[i + 1] - threshold_vals[i]
+      avg_y <- (jaccard_at_thresholds[i] + jaccard_at_thresholds[i + 1]) / 2
+      auc <- auc + dx * avg_y
+    }
+    threshold_range <- max(threshold_vals) - min(threshold_vals)
+    if(threshold_range > 0) auc <- auc / threshold_range
+    return(auc)
+  }
+
   for(method in methods) {
     for(approach in approaches) {
-      group_networks <- list()
 
-      for(group in all_groups) {
-        network_mat <- NULL
-
-        if(approach == "weighted") {
-          if(!is.null(correlation_methods_raw[[method]][[group]])) {
-            network_mat <- abs(correlation_methods_raw[[method]][[group]])
-          }
-        } else if(approach == "percolation") {
-          if(!is.null(method_percolation_results[[method]]$adjacency_matrices)) {
-            adj_mat <- method_percolation_results[[method]]$adjacency_matrices[[group]]
-            if(!is.null(adj_mat) && !is.null(correlation_methods_raw[[method]][[group]])) {
-              cor_mat <- abs(correlation_methods_raw[[method]][[group]])
-              network_mat <- adj_mat * cor_mat
-            }
-          }
-        } else if(approach == "persistence") {
-          if(!is.null(persistence_results[[method]][[group]]$persistence_data) &&
-             !is.null(correlation_methods_raw[[method]][[group]])) {
-            pers_data <- persistence_results[[method]][[group]]$persistence_data
-            threshold_vals <- as.numeric(names(pers_data))
-            if(length(threshold_vals) > 0) {
-              median_thresh <- median(threshold_vals)
-              cor_mat <- abs(correlation_methods_raw[[method]][[group]])
-              network_mat <- cor_mat
-              network_mat[network_mat < median_thresh] <- 0
-            }
-          }
-        }
-
-        if(!is.null(network_mat)) {
-          group_networks[[group]] <- network_mat
-        }
-      }
-
-      if(length(group_networks) >= 2) {
+      if(approach == "persistence") {
+        # Use trapezoidal AUC for persistence
         for(i in 1:(n_groups-1)) {
           for(j in (i+1):n_groups) {
             group_i <- all_groups[i]
             group_j <- all_groups[j]
+            auc_jaccard <- compute_persistence_auc_jaccard(method, group_i, group_j)
+            if(!is.na(auc_jaccard)) {
+              group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] + auc_jaccard
+              group_jaccard_matrix[j, i] <- group_jaccard_matrix[j, i] + auc_jaccard
+              combination_count[i, j] <- combination_count[i, j] + 1
+              combination_count[j, i] <- combination_count[j, i] + 1
+            }
+          }
+        }
+      } else {
+        # Weighted and Percolation approaches
+        group_networks <- list()
+        for(group in all_groups) {
+          network_mat <- NULL
+          if(approach == "weighted") {
+            if(!is.null(correlation_methods_raw[[method]][[group]])) {
+              network_mat <- abs(correlation_methods_raw[[method]][[group]])
+            }
+          } else if(approach == "percolation") {
+            if(!is.null(method_percolation_results[[method]]$adjacency_matrices)) {
+              adj_mat <- method_percolation_results[[method]]$adjacency_matrices[[group]]
+              if(!is.null(adj_mat) && !is.null(correlation_methods_raw[[method]][[group]])) {
+                cor_mat <- abs(correlation_methods_raw[[method]][[group]])
+                network_mat <- adj_mat * cor_mat
+              }
+            }
+          }
+          if(!is.null(network_mat)) {
+            group_networks[[group]] <- network_mat
+          }
+        }
 
-            if(group_i %in% names(group_networks) && group_j %in% names(group_networks)) {
-              jaccard <- compute_jaccard_similarity(group_networks[[group_i]],
-                                                    group_networks[[group_j]],
-                                                    threshold = 0)
-              if(!is.na(jaccard)) {
-                group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] + jaccard
-                group_jaccard_matrix[j, i] <- group_jaccard_matrix[j, i] + jaccard
-                combination_count[i, j] <- combination_count[i, j] + 1
-                combination_count[j, i] <- combination_count[j, i] + 1
+        if(length(group_networks) >= 2) {
+          for(i in 1:(n_groups-1)) {
+            for(j in (i+1):n_groups) {
+              group_i <- all_groups[i]
+              group_j <- all_groups[j]
+              if(group_i %in% names(group_networks) && group_j %in% names(group_networks)) {
+                jaccard <- compute_jaccard_similarity(group_networks[[group_i]],
+                                                      group_networks[[group_j]],
+                                                      threshold = 0)
+                if(!is.na(jaccard)) {
+                  group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] + jaccard
+                  group_jaccard_matrix[j, i] <- group_jaccard_matrix[j, i] + jaccard
+                  combination_count[i, j] <- combination_count[i, j] + 1
+                  combination_count[j, i] <- combination_count[j, i] + 1
+                }
               }
             }
           }
@@ -1108,7 +1155,7 @@ render_network_similarity_heatmap_plot <- function(correlation_methods_raw,
   }
 
   render_jaccard_heatmap(group_jaccard_matrix, all_groups,
-                        title = paste("Group Similarity (Avg across", total_combinations, "combinations)"))
+                        title = paste("Group Similarity (Avg across", total_combinations, "method-approach combinations)"))
 }
 
 
@@ -1116,19 +1163,20 @@ render_network_similarity_heatmap_plot <- function(correlation_methods_raw,
 # Render functions for individual approach similarity plots (for downloads)
 # ============================================================================
 
-render_network_similarity_weighted <- function(method_weighted_results, group_order = NULL) {
-  if(is.null(method_weighted_results)) {
+render_network_similarity_weighted <- function(correlation_methods_raw, group_order = NULL, selected_methods = NULL) {
+  if(is.null(correlation_methods_raw)) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
-    text(1, 1, "No weighted data", cex = 1.0, col = "gray")
+    text(1, 1, "No correlation data", cex = 1.0, col = "gray")
     return()
   }
 
-  # Get groups from first available method
+  methods <- if(!is.null(selected_methods)) intersect(selected_methods, names(correlation_methods_raw))
+             else names(correlation_methods_raw)
+
   all_groups <- NULL
-  methods <- names(method_weighted_results)
   for(method in methods) {
-    if(!is.null(method_weighted_results[[method]]$node_strength)) {
-      all_groups <- unique(method_weighted_results[[method]]$node_strength$Group)
+    if(!is.null(correlation_methods_raw[[method]])) {
+      all_groups <- names(correlation_methods_raw[[method]])
       break
     }
   }
@@ -1146,26 +1194,63 @@ render_network_similarity_weighted <- function(method_weighted_results, group_or
   }
 
   n_groups <- length(all_groups)
-  similarity_matrix <- matrix(1, nrow = n_groups, ncol = n_groups)
-  rownames(similarity_matrix) <- all_groups
-  colnames(similarity_matrix) <- all_groups
+  group_jaccard_matrix <- matrix(0, nrow = n_groups, ncol = n_groups)
+  rownames(group_jaccard_matrix) <- all_groups
+  colnames(group_jaccard_matrix) <- all_groups
+  combination_count <- matrix(0, nrow = n_groups, ncol = n_groups)
 
-  render_jaccard_heatmap(similarity_matrix, all_groups, title = "Weighted Approach")
+  for(method in methods) {
+    group_networks <- list()
+    for(group in all_groups) {
+      if(!is.null(correlation_methods_raw[[method]][[group]])) {
+        group_networks[[group]] <- abs(correlation_methods_raw[[method]][[group]])
+      }
+    }
+    if(length(group_networks) >= 2) {
+      for(i in 1:(n_groups-1)) {
+        for(j in (i+1):n_groups) {
+          group_i <- all_groups[i]
+          group_j <- all_groups[j]
+          if(group_i %in% names(group_networks) && group_j %in% names(group_networks)) {
+            jaccard <- compute_jaccard_similarity(group_networks[[group_i]], group_networks[[group_j]], threshold = 0)
+            if(!is.na(jaccard)) {
+              group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] + jaccard
+              group_jaccard_matrix[j, i] <- group_jaccard_matrix[j, i] + jaccard
+              combination_count[i, j] <- combination_count[i, j] + 1
+              combination_count[j, i] <- combination_count[j, i] + 1
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for(i in 1:n_groups) {
+    for(j in 1:n_groups) {
+      if(i == j) group_jaccard_matrix[i, j] <- 1
+      else if(combination_count[i, j] > 0) group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] / combination_count[i, j]
+    }
+  }
+
+  total_combinations <- max(combination_count)
+  render_jaccard_heatmap(group_jaccard_matrix, all_groups,
+                        title = paste("Weighted Approach (", total_combinations, " methods)", sep = ""))
 }
 
-render_network_similarity_percolation <- function(method_percolation_results, group_order = NULL) {
-  if(is.null(method_percolation_results)) {
+render_network_similarity_percolation <- function(correlation_methods_raw, method_percolation_results, group_order = NULL, selected_methods = NULL) {
+  if(is.null(method_percolation_results) || is.null(correlation_methods_raw)) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
     text(1, 1, "No percolation data", cex = 1.0, col = "gray")
     return()
   }
 
-  # Get groups from first available method
+  methods <- if(!is.null(selected_methods)) intersect(selected_methods, names(method_percolation_results))
+             else names(method_percolation_results)
+
   all_groups <- NULL
-  methods <- names(method_percolation_results)
   for(method in methods) {
-    if(!is.null(method_percolation_results[[method]]$node_metrics)) {
-      all_groups <- unique(method_percolation_results[[method]]$node_metrics$Group)
+    if(!is.null(correlation_methods_raw[[method]])) {
+      all_groups <- names(correlation_methods_raw[[method]])
       break
     }
   }
@@ -1183,23 +1268,63 @@ render_network_similarity_percolation <- function(method_percolation_results, gr
   }
 
   n_groups <- length(all_groups)
-  similarity_matrix <- matrix(1, nrow = n_groups, ncol = n_groups)
-  rownames(similarity_matrix) <- all_groups
-  colnames(similarity_matrix) <- all_groups
+  group_jaccard_matrix <- matrix(0, nrow = n_groups, ncol = n_groups)
+  rownames(group_jaccard_matrix) <- all_groups
+  colnames(group_jaccard_matrix) <- all_groups
+  combination_count <- matrix(0, nrow = n_groups, ncol = n_groups)
 
-  render_jaccard_heatmap(similarity_matrix, all_groups, title = "Percolation Approach")
+  for(method in methods) {
+    group_networks <- list()
+    for(group in all_groups) {
+      if(!is.null(method_percolation_results[[method]]$adjacency_matrices[[group]]) &&
+         !is.null(correlation_methods_raw[[method]][[group]])) {
+        adj_mat <- method_percolation_results[[method]]$adjacency_matrices[[group]]
+        cor_mat <- abs(correlation_methods_raw[[method]][[group]])
+        group_networks[[group]] <- adj_mat * cor_mat
+      }
+    }
+    if(length(group_networks) >= 2) {
+      for(i in 1:(n_groups-1)) {
+        for(j in (i+1):n_groups) {
+          group_i <- all_groups[i]
+          group_j <- all_groups[j]
+          if(group_i %in% names(group_networks) && group_j %in% names(group_networks)) {
+            jaccard <- compute_jaccard_similarity(group_networks[[group_i]], group_networks[[group_j]], threshold = 0)
+            if(!is.na(jaccard)) {
+              group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] + jaccard
+              group_jaccard_matrix[j, i] <- group_jaccard_matrix[j, i] + jaccard
+              combination_count[i, j] <- combination_count[i, j] + 1
+              combination_count[j, i] <- combination_count[j, i] + 1
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for(i in 1:n_groups) {
+    for(j in 1:n_groups) {
+      if(i == j) group_jaccard_matrix[i, j] <- 1
+      else if(combination_count[i, j] > 0) group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] / combination_count[i, j]
+    }
+  }
+
+  total_combinations <- max(combination_count)
+  render_jaccard_heatmap(group_jaccard_matrix, all_groups,
+                        title = paste("Percolation Approach (", total_combinations, " methods)", sep = ""))
 }
 
-render_network_similarity_persistence <- function(persistence_results, group_order = NULL) {
-  if(is.null(persistence_results)) {
+render_network_similarity_persistence <- function(correlation_methods_raw, persistence_results, group_order = NULL, selected_methods = NULL) {
+  if(is.null(persistence_results) || is.null(correlation_methods_raw)) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
     text(1, 1, "No persistence data", cex = 1.0, col = "gray")
     return()
   }
 
-  # Get groups from first available method
+  methods <- if(!is.null(selected_methods)) intersect(selected_methods, names(persistence_results))
+             else names(persistence_results)
+
   all_groups <- NULL
-  methods <- names(persistence_results)
   for(method in methods) {
     if(!is.null(persistence_results[[method]])) {
       all_groups <- names(persistence_results[[method]])
@@ -1220,11 +1345,70 @@ render_network_similarity_persistence <- function(persistence_results, group_ord
   }
 
   n_groups <- length(all_groups)
-  similarity_matrix <- matrix(1, nrow = n_groups, ncol = n_groups)
-  rownames(similarity_matrix) <- all_groups
-  colnames(similarity_matrix) <- all_groups
+  group_jaccard_matrix <- matrix(0, nrow = n_groups, ncol = n_groups)
+  rownames(group_jaccard_matrix) <- all_groups
+  colnames(group_jaccard_matrix) <- all_groups
+  combination_count <- matrix(0, nrow = n_groups, ncol = n_groups)
 
-  render_jaccard_heatmap(similarity_matrix, all_groups, title = "Persistence Approach")
+  # Helper: compute AUC of Jaccard using trapezoidal integration
+  compute_persistence_auc_jaccard <- function(method, group_i, group_j) {
+    pers_data_i <- persistence_results[[method]][[group_i]]$persistence_data
+    pers_data_j <- persistence_results[[method]][[group_j]]$persistence_data
+    cor_mat_i_raw <- correlation_methods_raw[[method]][[group_i]]
+    cor_mat_j_raw <- correlation_methods_raw[[method]][[group_j]]
+
+    if(is.null(pers_data_i) || is.null(pers_data_j) || is.null(cor_mat_i_raw) || is.null(cor_mat_j_raw)) return(NA)
+
+    threshold_vals <- sort(as.numeric(intersect(names(pers_data_i), names(pers_data_j))))
+    if(length(threshold_vals) < 2) return(NA)
+
+    jaccard_at_thresholds <- numeric(length(threshold_vals))
+    for(t_idx in seq_along(threshold_vals)) {
+      thresh <- threshold_vals[t_idx]
+      cor_mat_i <- abs(cor_mat_i_raw)
+      cor_mat_j <- abs(cor_mat_j_raw)
+      cor_mat_i[cor_mat_i < thresh] <- 0
+      cor_mat_j[cor_mat_j < thresh] <- 0
+      jaccard_at_thresholds[t_idx] <- compute_jaccard_similarity(cor_mat_i, cor_mat_j, threshold = 0)
+    }
+
+    auc <- 0
+    for(i in 1:(length(threshold_vals) - 1)) {
+      dx <- threshold_vals[i + 1] - threshold_vals[i]
+      avg_y <- (jaccard_at_thresholds[i] + jaccard_at_thresholds[i + 1]) / 2
+      auc <- auc + dx * avg_y
+    }
+    threshold_range <- max(threshold_vals) - min(threshold_vals)
+    if(threshold_range > 0) auc <- auc / threshold_range
+    return(auc)
+  }
+
+  for(method in methods) {
+    for(i in 1:(n_groups-1)) {
+      for(j in (i+1):n_groups) {
+        group_i <- all_groups[i]
+        group_j <- all_groups[j]
+        auc_jaccard <- compute_persistence_auc_jaccard(method, group_i, group_j)
+        if(!is.na(auc_jaccard)) {
+          group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] + auc_jaccard
+          group_jaccard_matrix[j, i] <- group_jaccard_matrix[j, i] + auc_jaccard
+          combination_count[i, j] <- combination_count[i, j] + 1
+          combination_count[j, i] <- combination_count[j, i] + 1
+        }
+      }
+    }
+  }
+
+  for(i in 1:n_groups) {
+    for(j in 1:n_groups) {
+      if(i == j) group_jaccard_matrix[i, j] <- 1
+      else if(combination_count[i, j] > 0) group_jaccard_matrix[i, j] <- group_jaccard_matrix[i, j] / combination_count[i, j]
+    }
+  }
+
+  total_combinations <- max(combination_count)
+  render_jaccard_heatmap(group_jaccard_matrix, all_groups,
+                        title = paste("Persistence Approach - AUC (", total_combinations, " methods)", sep = ""))
 }
 
 
