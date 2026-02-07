@@ -538,7 +538,7 @@ render_consensus_node_metrics_plot <- function(comprehensive_consensus,
       # Always label ALL valid nodes with offset positioning
       valid_node_indices <- which(valid_idx)
       n_valid <- length(valid_node_indices)
-      label_cex <- if(n_valid > 40) 0.45 else if(n_valid > 25) 0.55 else 0.6
+      label_cex <- if(n_valid > 40) 0.55 else if(n_valid > 25) 0.65 else 0.7
       for(i in valid_node_indices) {
         is_top <- i %in% top_nodes_idx
         text(strength_rank[i], eigenvector_rank[i],

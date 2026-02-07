@@ -7554,7 +7554,7 @@ server <- function(input, output, session) {
 
       # Add node labels for ALL nodes with smart positioning to reduce overlap
       n_nodes <- nrow(group_data)
-      label_cex <- if(n_nodes > 20) 0.5 else if(n_nodes > 15) 0.55 else 0.6
+      label_cex <- if(n_nodes > 20) 0.65 else if(n_nodes > 15) 0.7 else 0.75
       positions <- rep(c(3, 1, 4, 2), length.out = n_nodes)
       order_idx <- order(strength_rank + eigenvector_rank)
       positions[order_idx] <- rep(c(3, 1, 4, 2), length.out = n_nodes)
@@ -8450,7 +8450,7 @@ server <- function(input, output, session) {
 
         # Label ALL nodes with smart positioning to reduce overlap
         n_nodes <- nrow(consensus_df)
-        label_cex <- if(n_nodes > 20) 0.5 else if(n_nodes > 15) 0.55 else 0.6
+        label_cex <- if(n_nodes > 20) 0.65 else if(n_nodes > 15) 0.7 else 0.75
         # Alternate positions: 1=below, 2=left, 3=above, 4=right
         positions <- rep(c(3, 1, 4, 2), length.out = n_nodes)
         # Sort by x+y to spread out position assignments
@@ -8545,7 +8545,7 @@ server <- function(input, output, session) {
 
         # Label ALL nodes with smart positioning to reduce overlap
         n_nodes <- nrow(consensus_df)
-        label_cex <- if(n_nodes > 20) 0.5 else if(n_nodes > 15) 0.55 else 0.6
+        label_cex <- if(n_nodes > 20) 0.65 else if(n_nodes > 15) 0.7 else 0.75
         positions <- rep(c(3, 1, 4, 2), length.out = n_nodes)
         order_idx <- order(consensus_df$Avg_Strength_Rank + consensus_df$Avg_Eigen_Rank)
         positions[order_idx] <- rep(c(3, 1, 4, 2), length.out = n_nodes)

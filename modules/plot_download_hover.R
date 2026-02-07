@@ -1013,7 +1013,7 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
 
             # Label ALL nodes with smart positioning to reduce overlap
             n_nodes <- nrow(consensus_df)
-            label_cex <- if(n_nodes > 20) 0.5 else if(n_nodes > 15) 0.55 else 0.6
+            label_cex <- if(n_nodes > 20) 0.65 else if(n_nodes > 15) 0.7 else 0.75
             positions <- rep(c(3, 1, 4, 2), length.out = n_nodes)
             order_idx <- order(consensus_df$Consensus_NodeStrength + consensus_df$Consensus_Eigenvector)
             positions[order_idx] <- rep(c(3, 1, 4, 2), length.out = n_nodes)
@@ -1104,7 +1104,7 @@ create_hover_plot_registry <- function(analysis_results, ui_state, input) {
 
             # Label ALL nodes with smart positioning to reduce overlap
             n_nodes <- nrow(consensus_df)
-            label_cex <- if(n_nodes > 20) 0.5 else if(n_nodes > 15) 0.55 else 0.6
+            label_cex <- if(n_nodes > 20) 0.65 else if(n_nodes > 15) 0.7 else 0.75
             positions <- rep(c(3, 1, 4, 2), length.out = n_nodes)
             order_idx <- order(consensus_df$Avg_Strength_Rank + consensus_df$Avg_Eigen_Rank)
             positions[order_idx] <- rep(c(3, 1, 4, 2), length.out = n_nodes)
